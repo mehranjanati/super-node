@@ -1,0 +1,16 @@
+input:
+  kafka:
+    addresses: [ "redpanda:29092" ]
+    topics: [ "market-data" ]
+    consumer_group: "wasm-group"
+
+pipeline:
+  processors:
+    - wasm:
+        module_path: "/connect/crypto_analyzer.wasm"
+        function: "process"
+
+output:
+  kafka:
+    addresses: [ "redpanda:29092" ]
+    topic: "market-analysis"

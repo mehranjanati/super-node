@@ -1,0 +1,153 @@
+
+version: '3.8'
+services:
+  tidb:
+    image: pingcap/tidb:latest
+    ports:
+      - "4001:4000"
+      - "10081:10080"
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9093
+      - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9093
+    ports:
+      - "9093:9092"
+      - "29092:29092"
+  redis:
+    image: redis/redis-stack:latest
+    ports:
+      - "6380:6379"
+      - "8002:8001"
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: chatwoot_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  hasura:
+    image: hasura/graphql-engine:v2.3.0
+    ports:
+      - "8080:8080"
+    depends_on:
+      - "postgres"
+      - "tidb"
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:password@postgres:5432/chatwoot_dev
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_ADMIN_SECRET: "myadminsecretkey"
+  
+  # سرویس جدید LiveKit Token Generator
+  livekit-backend:
+    build: ./backend
+    container_name: livekit-backend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./backend/.env
+    restart: unless-stopped
+    depends_on:
+      - livekit
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+    depends_on:
+      - redis
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"
+      - "8233:8233"
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=password
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      - postgres
+
+  wasm-processor:
+    image: redpandadata/connect:latest
+    ports:
+      - "4195:4195" # Management API for dynamic streams
+    volumes:
+      - wasm_artifacts:/data/wasm # Shared volume for Wasm files
+      - ./streams:/streams # Directory for dynamic stream configs
+      - ./connect.yaml:/connect.yaml # Keep base config available if needed
+    command: streams /streams
+    environment:
+      - BENTHOS_API_ENABLED=true
+    depends_on:
+      - redpanda
+
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:latest
+    ports:
+      - "18789:18789"
+    environment:
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_AUTH_SECRET=changeme
+      - CONFIG_PATH=/etc/openclaw/config.yaml
+    volumes:
+      - ./openclaw-data:/root/.openclaw
+      - ./openclaw.yaml:/etc/openclaw/config.yaml
+    restart: unless-stopped
+
+  voltagent:
+    image: ghcr.io/voltagent/voltagent:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - VOLTAGENT_GATEWAY_URL=http://nexus-super-node:3000/voltagent
+      - VOLTAGENT_MANIFEST_URL=http://nexus-super-node:3000/voltagent/manifest
+      - VOLTAGENT_AUTH_TOKEN=supernode-secret
+    depends_on:
+      - nexus-super-node
+    restart: unless-stopped
+
+  nexus-super-node:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000" # Changed to 3001 to avoid conflict with livekit-backend
+    environment:
+      - NEXUS_POSTGRES_URL=postgres://postgres:password@postgres:5432/chatwoot_dev?sslmode=disable
+      - NEXUS_REDPANDA_BROKERS=redpanda:29092
+      - NEXUS_HASURA_URL=http://hasura:8080/v1/graphql
+      - NEXUS_SERVER_PORT=3000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - wasm_artifacts:/data/wasm # Shared volume for Wasm files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+      hasura:
+        condition: service_started
+
+volumes:
+  wasm_artifacts:

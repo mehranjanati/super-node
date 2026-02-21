@@ -1,0 +1,18 @@
+# OpenClaw Configuration
+# Documentation: https://docs.openclaw.ai/
+
+channels:
+  # Matrix is disabled. You can enable other channels like Telegram or WhatsApp here.
+  # Example for Telegram:
+  # telegram:
+  #   enabled: true
+  #   token: "YOUR_TELEGRAM_BOT_TOKEN"
+  
+  matrix:
+    enabled: true
+    homeserver_url: "http://matrix:6167"
+
+gateway:
+  # Gateway settings for internal communication with Nexus Super Node
+  enabled: true
+  port: 8095

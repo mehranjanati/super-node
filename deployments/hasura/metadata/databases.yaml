@@ -1,0 +1,13 @@
+- name: postgres
+  kind: postgres
+  configuration:
+    connection_info:
+      database_url:
+        from_env: HASURA_GRAPHQL_DATABASE_URL
+  tables: "!include postgres/tables/tables.yaml"
+- name: tidb
+  kind: tidb
+  configuration:
+    connection_info:
+      database_url: tidb://root:@tidb:4000/test
+  tables: "!include tidb/tables/tables.yaml"

@@ -1,0 +1,246 @@
+services:
+  # Service 1: LiveKit Server
+  livekit:
+    container_name: podman-livekit-1
+    image: livekit/livekit-server:latest
+    command: --config /livekit.yaml
+    # network_mode: host # Changed for Mac compatibility
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    depends_on:
+      - redis
+    volumes:
+      - ./config/livekit.yaml:/livekit.yaml
+      - ./data/livekit:/data
+    restart: unless-stopped
+
+  # Service 11: LiveKit SIP (Native Bridge)
+  sip:
+    container_name: livekit-sip
+    image: livekit/sip
+    entrypoint:
+      - livekit-sip
+      - --config
+      - /sip.yaml
+    # network_mode: host # Changed for Mac compatibility
+    ports:
+      - "5060:5060"
+      - "5060:5060/udp"
+    depends_on:
+      - livekit
+      - redis
+    volumes:
+      - ./config/sip.yaml:/sip.yaml
+    restart: unless-stopped
+
+  # Service 12: Matrix Homeserver (Conduit - Rust)
+  # High-performance, lightweight Matrix server for DPIN chat/channels
+  matrix:
+    container_name: matrix-conduit
+    image: matrixconduit/conduit:latest
+    environment:
+      CONDUIT_SERVER_NAME: "localhost" # In production, use your domain
+      CONDUIT_DATABASE_PATH: "/var/lib/matrix-conduit/"
+      CONDUIT_PORT: 6167
+      CONDUIT_MAX_REQUEST_SIZE: 20000000
+      CONDUIT_ALLOW_REGISTRATION: "true"
+      CONDUIT_ALLOW_FEDERATION: "false" # Enable for multi-node DPIN
+      CONDUIT_TRUSTED_SERVERS: "[\"matrix.org\"]"
+    ports:
+      - "6167:6167"
+      - "8448:8448"
+    volumes:
+      - ./data/matrix:/var/lib/matrix-conduit
+    restart: unless-stopped
+
+  # Service 12b: OpenClaw (Multi-Channel Gateway)
+  openclaw:
+    container_name: openclaw
+    image: openclaw/gateway:latest # Assuming this image exists or using a placeholder
+    ports:
+      - "8095:8095"
+    environment:
+      - OPENCLAW_PORT=8095
+      - MATRIX_HOMESERVER_URL=http://matrix:6167
+      - REDPANDA_BROKERS=redpanda:9092
+    volumes:
+      - ./config/openclaw.yaml:/app/config.yaml
+      - ./data/openclaw:/root/.openclaw # Persistent storage for OpenClaw state
+    command: sh -c "openclaw plugins install @openclaw/matrix && openclaw gateway start" # Install plugin on startup
+    depends_on:
+      - matrix
+      - redpanda
+    restart: unless-stopped
+
+  # Service 13: Wasm Agent (Docker Wasm - DPIN Edge)
+  wasm-agent:
+    container_name: wasm-agent
+    image: secondstate/rust-example-server
+    runtime: io.containerd.wasmtime.v1
+    platform: wasi/wasm
+    ports:
+      - "8090:8080"
+    restart: unless-stopped
+
+  # Service 14: Redpanda Connect (The AI/Data Pipeline)
+  redpanda-connect:
+    container_name: redpanda-connect
+    image: docker.redpanda.com/redpandadata/connect:latest
+    volumes:
+      - ./config/connect.yaml:/connect.yaml
+      - ./data/wasm:/wasm  # Where our compiled Rust Wasm modules live
+    command: 
+      - "-c" 
+      - "/connect.yaml"
+    depends_on:
+      - redpanda
+      - postgres
+    restart: unless-stopped
+
+  # Service 2: Redis (Shared by LiveKit and Orchestrator)
+  redis:
+    container_name: podman-redis-1
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    restart: unless-stopped
+
+
+  # Service 4: TiDB
+  tidb:
+    container_name: podman-tidb-1
+    image: pingcap/tidb:latest
+    ports:
+      - "4001:4000"
+      - "10081:10080"
+    restart: unless-stopped
+
+  # Service 5: Postgres (For Hasura/Application Data)
+  postgres:
+    container_name: podman-postgres-1
+    image: postgres:14
+    environment:
+      POSTGRES_DB: chatwoot_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Service 6: Hasura GraphQL Engine
+  hasura:
+    container_name: podman-hasura-1
+    image: hasura/graphql-engine:v2.3.0
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - tidb
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:password@postgres:5432/chatwoot_dev
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_ADMIN_SECRET: "myadminsecretkey"
+    restart: unless-stopped
+
+  # Service 7: Redpanda (Kafka)
+  redpanda:
+    container_name: podman-redpanda-1
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Service 8: Temporal Server
+  temporal:
+    container_name: temporal
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=password
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Service 8b: Temporal UI
+  temporal-ui:
+    container_name: temporal-ui
+    image: temporalio/ui:latest
+    ports:
+      - "8081:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    depends_on:
+      - temporal
+    restart: unless-stopped
+
+  # Service 9: Nexus Super Node (Go Service)
+  nexus-super-node:
+    container_name: podman-nexus-super-node-1
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - RIVET_SERVICE_URL=rivet-service:50051
+      - REDPANDA_BROKERS=redpanda:9092
+      - NEXUS_REDPANDA_BROKERS=redpanda:29092
+      - NEXUS_POSTGRES_URL=postgres://postgres:password@postgres:5432/chatwoot_dev?sslmode=disable
+      - NEXUS_HASURA_URL=http://hasura:8080/v1/graphql
+      - NEXUS_SERVER_PORT=3000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/run/podman/podman.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      hasura:
+        condition: service_started
+      rivet-service:
+        condition: service_started
+      temporal:
+        condition: service_started
+    restart: unless-stopped
+
+  # Service 10: Rivet Service
+  rivet-service:
+    container_name: podman-rivet-service-1
+    platform: linux/amd64
+    build: ./rivet-service
+    ports:
+      - "50051:50051"
+    restart: unless-stopped

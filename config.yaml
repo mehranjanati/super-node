@@ -1,0 +1,18 @@
+server:
+  port: "3000"
+
+redpanda:
+  brokers:
+    - "localhost:9092"
+  topic: "nexus_tasks"
+  group_id: "nexus_worker_group"
+
+hasura:
+  url: "http://localhost:8080/v1/graphql"
+  admin_secret: "myadminsecretkey"
+
+agents:
+  concurrency: 50 # High concurrency setting
+
+postgres:
+  url: "postgres://elbaan:@localhost:5432/postgres?sslmode=disable"

@@ -1,0 +1,3 @@
+- table:
+    schema: test
+    name: app_data

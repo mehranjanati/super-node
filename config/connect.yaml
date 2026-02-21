@@ -1,0 +1,28 @@
+input:
+  label: market_data_feed
+  generate:
+    interval: 5s
+    mapping: |
+      root = [
+        {"symbol": "BTC", "price": 96000.0, "volume_24h": 50000000000.0},
+        {"symbol": "ETH", "price": 3600.0, "volume_24h": 20000000000.0},
+        {"symbol": "SOL", "price": 150.0, "volume_24h": 500000000.0}
+      ]
+
+pipeline:
+  processors:
+    - label: ai_simulation
+      mapping: |
+        root = {}
+        let sorted = this.sort_by(item -> item.volume_24h)
+        let top_coin = $sorted.index(-1)
+        root.strategy = if $top_coin.volume_24h > 1000000000.0 { "BUY" } else { "SELL" }
+        root.top_pick = $top_coin.symbol
+        root.risk_level = if root.strategy == "BUY" { "MEDIUM" } else { "LOW" }
+        root.reasoning = "Volume analysis indicates " + root.strategy + " signal for " + root.top_pick
+
+output:
+  label: to_temporal
+  kafka:
+    addresses: ["redpanda:29092"]
+    topic: "market-analysis-results"

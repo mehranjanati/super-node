@@ -1,0 +1,91 @@
+{
+  "title": "High Priority Transaction Risk Analysis",
+  "description": "Analyzes financial transactions for risk and AML compliance.",
+  "nodes": [
+    {
+      "id": "input_risk_score",
+      "type": "input",
+      "data": {
+        "dataType": "number",
+        "label": "Risk Score"
+      },
+      "position": { "x": 100, "y": 100 }
+    },
+    {
+      "id": "input_aml_status",
+      "type": "input",
+      "data": {
+        "dataType": "boolean",
+        "label": "AML Status"
+      },
+      "position": { "x": 100, "y": 300 }
+    },
+    {
+      "id": "const_risk_threshold",
+      "type": "number",
+      "data": {
+        "value": 0.8,
+        "label": "Risk Threshold"
+      },
+      "position": { "x": 300, "y": 50 }
+    },
+    {
+      "id": "compare_risk",
+      "type": "compare",
+      "data": {
+        "operation": "lessThan",
+        "label": "Is Risk Acceptable?"
+      },
+      "position": { "x": 500, "y": 100 }
+    },
+    {
+      "id": "logic_and",
+      "type": "logic",
+      "data": {
+        "operation": "and",
+        "label": "Final Decision"
+      },
+      "position": { "x": 700, "y": 200 }
+    },
+    {
+      "id": "output_decision",
+      "type": "output",
+      "data": {
+        "label": "Transaction Approved"
+      },
+      "position": { "x": 900, "y": 200 }
+    }
+  ],
+  "connections": [
+    {
+      "source": "input_risk_score",
+      "sourceHandle": "output",
+      "target": "compare_risk",
+      "targetHandle": "a"
+    },
+    {
+      "source": "const_risk_threshold",
+      "sourceHandle": "output",
+      "target": "compare_risk",
+      "targetHandle": "b"
+    },
+    {
+      "source": "compare_risk",
+      "sourceHandle": "output",
+      "target": "logic_and",
+      "targetHandle": "a"
+    },
+    {
+      "source": "input_aml_status",
+      "sourceHandle": "output",
+      "target": "logic_and",
+      "targetHandle": "b"
+    },
+    {
+      "source": "logic_and",
+      "sourceHandle": "output",
+      "target": "output_decision",
+      "targetHandle": "input"
+    }
+  ]
+}

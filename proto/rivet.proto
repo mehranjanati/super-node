@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package rivet;
+
+option go_package = "nexus-super-node-v3/internal/adapters/rivet/proto";
+
+import "google/protobuf/struct.proto";
+
+service RivetService {
+  rpc ExecuteGraph(ExecuteGraphRequest) returns (ExecuteGraphResponse);
+}
+
+message ExecuteGraphRequest {
+  string graph_id = 1;
+  google.protobuf.Struct inputs = 2;
+  string toolbelt_json = 3;
+  string project_content = 4;
+}
+
+message ExecuteGraphResponse {
+  google.protobuf.Struct outputs = 1;
+}

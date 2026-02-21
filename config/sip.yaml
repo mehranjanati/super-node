@@ -1,0 +1,14 @@
+redis:
+  address: redis:6379
+
+sip_trunk:
+  - name: generic-trunk
+    transport: udp
+    # Use 0.0.0.0 or a valid external IP, not 127.0.0.1 which refers to the container itself
+    address: 0.0.0.0
+    username: mock-user
+    password: mock-password
+
+dispatch_rule:
+  - rule: ".*"
+    room_prefix: "call_"

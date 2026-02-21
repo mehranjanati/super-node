@@ -1,0 +1,60 @@
+{
+  "context": {
+    "project_name": "Nexus Super Node Portal",
+    "description": "A high-concurrency agentic workflow portal interacting with a Go-based Super Node backend, Hasura, and Redpanda.",
+    "stack": {
+      "frontend_framework": "SvelteKit (SPA mode)",
+      "runtime_env": "WebContainer (Bolt.new compatible)",
+      "ai_integration": "Vercel AI SDK (Core + React/Svelte hooks)",
+      "workflow_engine": "Rivet (Visual AI Programming)",
+      "backend": "Go (Echo Framework)",
+      "database": "PostgreSQL (via Hasura) & TiDB",
+      "messaging": "Redpanda (Kafka protocol)",
+      "api_gateway": "http://localhost:3000",
+      "graphql_engine": "http://localhost:8080/v1/graphql"
+    }
+  },
+  "integration_instructions": {
+    "authentication": {
+      "method": "SIWE (Sign-In with Ethereum)",
+      "library": "Use 'viem' or '@wagmi/core' adapted for Svelte",
+      "flow": [
+        "1. Frontend requests nonce from GET /auth/nonce",
+        "2. User signs SIWE message with wallet",
+        "3. Frontend sends {message, signature} to POST /auth/verify",
+        "4. Backend validates and sets session cookie"
+      ]
+    },
+    "api_endpoints": [
+      {
+        "name": "Health Check",
+        "method": "GET",
+        "url": "http://localhost:3000/health"
+      },
+      {
+        "name": "Execute Tool (Direct)",
+        "method": "POST",
+        "url": "http://localhost:3000/tools/execute",
+        "body_schema": {
+          "tool_belt_name": "string (e.g., 'sample')",
+          "tool_name": "string (e.g., 'hello')",
+          "args": ["array", "of", "arguments"]
+        }
+      },
+      {
+        "name": "Hasura GraphQL",
+        "method": "POST",
+        "url": "http://localhost:8080/v1/graphql",
+        "notes": "Use for querying user data, tasks, and subscribing to workflow updates."
+      }
+    ],
+    "development_server_config": {
+      "cors_allowed_origins": [
+        "http://localhost:5173",
+        "http://localhost:5174"
+      ],
+      "adapter": "adapter-static (SPA mode)"
+    }
+  },
+  "task_for_ide": "Generate a robust SvelteKit SPA dashboard optimized for WebContainers (Bolt). 1. Setup 'Vercel AI SDK' to stream responses from the backend or direct LLM calls. 2. Integrate 'Rivet' for visualizing agent workflows (if a Rivet UI SDK is available, otherwise prepare components to display Rivet graph data). 3. Implement SIWE authentication using 'viem'. 4. Create a 'Control Plane' where users can trigger tools via the Go Gateway and view real-time updates from Hasura subscriptions. Ensure the UI is futuristic and responsive."
+}

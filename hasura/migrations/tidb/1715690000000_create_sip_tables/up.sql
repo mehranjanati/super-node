@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS sip_trunks (
+    id VARCHAR(36) PRIMARY KEY, /* UUID */
+    name VARCHAR(255) NOT NULL,
+    address VARCHAR(255) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    transport VARCHAR(10) DEFAULT 'udp', /* udp, tcp, tls */
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sip_dispatch_rules (
+    id VARCHAR(36) PRIMARY KEY, /* UUID */
+    trunk_id VARCHAR(36),
+    rule_pattern VARCHAR(255) NOT NULL,
+    room_prefix VARCHAR(255) NOT NULL,
+    priority INT DEFAULT 0,
+    metadata JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (trunk_id) REFERENCES sip_trunks(id) ON DELETE CASCADE
+);

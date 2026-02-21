@@ -1,0 +1,26 @@
+server:
+  port: "3000"
+
+redpanda:
+  brokers: ["localhost:9092"]
+  topic: "market-analysis-results"
+  group_id: "nexus_market_group"
+
+agents:
+  concurrency: 50 # High concurrency setting
+
+matrix:
+  homeserver_url: "http://matrix:6167"
+  server_name: "localhost"
+  registration_shared_secret: "change_me_in_production"
+
+livekit:
+  api_url: "http://livekit:7880"
+  api_key: "devkey"
+  api_secret: "secret"
+
+postgres:
+  url: "postgres://elbaan:@localhost:5432/postgres?sslmode=disable"
+
+tidb:
+  dsn: "root:@tcp(localhost:4001)/nexus?charset=utf8mb4&parseTime=True&loc=Local"

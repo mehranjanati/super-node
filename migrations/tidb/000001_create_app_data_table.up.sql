@@ -1,0 +1,5 @@
+CREATE TABLE app_data (
+    id VARCHAR(36) PRIMARY KEY,
+    data JSON NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
