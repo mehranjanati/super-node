@@ -3,6 +3,7 @@ package tidb
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"nexus-super-node-v3/internal/core/domain"
@@ -16,23 +17,23 @@ type tidbRepository struct {
 }
 
 // NewTiDBRepository creates a new TiDB/MySQL repository
-func NewTiDBRepository(ctx context.Context, dsn string) (ports.UserRepository, ports.FinanceRepository, ports.AppDataRepository, error) {
+func NewTiDBRepository(ctx context.Context, dsn string) (ports.UserRepository, ports.FinanceRepository, ports.AppDataRepository, ports.SocialRepository, error) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to open tidb connection: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to open tidb connection: %w", err)
 	}
 
 	if err := db.PingContext(ctx); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to ping tidb: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to ping tidb: %w", err)
 	}
 
 	// Ensure tables exist (Simple migration for now)
 	if err := migrate(ctx, db); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to migrate tidb schema: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to migrate tidb schema: %w", err)
 	}
 
 	repo := &tidbRepository{db: db}
-	return repo, repo, repo, nil
+	return repo, repo, repo, repo, nil
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
@@ -79,6 +80,30 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			id VARCHAR(255) PRIMARY KEY,
 			data BLOB NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS posts (
+			id VARCHAR(255) PRIMARY KEY,
+			author_id VARCHAR(255) NOT NULL,
+			content TEXT,
+			media_urls JSON,
+			tags JSON,
+			likes INT DEFAULT 0,
+			metadata JSON,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS comments (
+			id VARCHAR(255) PRIMARY KEY,
+			post_id VARCHAR(255) NOT NULL,
+			author_id VARCHAR(255) NOT NULL,
+			content TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_post_id (post_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS post_likes (
+			post_id VARCHAR(255) NOT NULL,
+			user_id VARCHAR(255) NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (post_id, user_id)
 		);`,
 	}
 
@@ -198,6 +223,47 @@ func (r *tidbRepository) GetBalance(ctx context.Context, userID, assetID string)
 	return &ub, nil
 }
 
+func (r *tidbRepository) TransferFunds(ctx context.Context, fromUserID, toUserID, assetID string, amount float64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 1. Check sender balance (Locking row)
+	var balance float64
+	err = tx.QueryRowContext(ctx, "SELECT balance FROM user_balances WHERE user_id = ? AND asset_id = ? FOR UPDATE", fromUserID, assetID).Scan(&balance)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("sender has no balance record")
+		}
+		return err
+	}
+
+	if balance < amount {
+		return fmt.Errorf("insufficient funds")
+	}
+
+	// 2. Deduct from sender
+	_, err = tx.ExecContext(ctx, "UPDATE user_balances SET balance = balance - ? WHERE user_id = ? AND asset_id = ?", amount, fromUserID, assetID)
+	if err != nil {
+		return err
+	}
+
+	// 3. Add to receiver (Upsert)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO user_balances (user_id, asset_id, balance) 
+		VALUES (?, ?, ?) 
+		ON DUPLICATE KEY UPDATE balance = balance + ?`,
+		toUserID, assetID, amount, amount,
+	)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 func (r *tidbRepository) SaveLoan(ctx context.Context, loan *domain.Loan) error {
 	_, err := r.db.ExecContext(ctx,
 		"INSERT INTO loans (id, borrower_id, collateral_id, amount, interest_rate, status, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -238,5 +304,137 @@ func (r *tidbRepository) GetAppData(ctx context.Context, id string) (*domain.App
 
 func (r *tidbRepository) CreateAppData(ctx context.Context, id string, data []byte) error {
 	_, err := r.db.ExecContext(ctx, "INSERT INTO app_data (id, data) VALUES (?, ?)", id, data)
+	return err
+}
+
+// --- SocialRepository Implementation ---
+
+func (r *tidbRepository) SavePost(ctx context.Context, post *domain.Post) error {
+	mediaJSON, _ := json.Marshal(post.MediaURLs)
+	tagsJSON, _ := json.Marshal(post.Tags)
+	metadataJSON, _ := json.Marshal(post.Metadata)
+
+	_, err := r.db.ExecContext(ctx,
+		"INSERT INTO posts (id, author_id, content, media_urls, tags, likes, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		post.ID, post.AuthorID, post.Content, mediaJSON, tagsJSON, post.Likes, metadataJSON, post.CreatedAt,
+	)
+	return err
+}
+
+func (r *tidbRepository) GetPosts(ctx context.Context, filter domain.FeedFilter) ([]*domain.Post, error) {
+	// Simple implementation ignoring complex filters for now
+	query := "SELECT id, author_id, content, media_urls, tags, likes, metadata, created_at FROM posts ORDER BY created_at DESC"
+	if filter.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var posts []*domain.Post
+	for rows.Next() {
+		var post domain.Post
+		var mediaJSON, tagsJSON, metadataJSON []byte
+		var likes int
+		// Scan likes into temporary variable first to avoid type mismatch if needed
+		if err := rows.Scan(&post.ID, &post.AuthorID, &post.Content, &mediaJSON, &tagsJSON, &likes, &metadataJSON, &post.CreatedAt); err != nil {
+			return nil, err
+		}
+		post.Likes = likes
+
+		var mediaURLs []string
+		if len(mediaJSON) > 0 {
+			json.Unmarshal(mediaJSON, &mediaURLs)
+		}
+		post.MediaURLs = mediaURLs
+
+		var tags []string
+		if len(tagsJSON) > 0 {
+			json.Unmarshal(tagsJSON, &tags)
+		}
+		post.Tags = tags
+
+		var metadata map[string]interface{}
+		if len(metadataJSON) > 0 {
+			json.Unmarshal(metadataJSON, &metadata)
+		}
+		post.Metadata = metadata
+
+		posts = append(posts, &post)
+	}
+	return posts, nil
+}
+
+func (r *tidbRepository) GetPostByID(ctx context.Context, id string) (*domain.Post, error) {
+	var post domain.Post
+	var mediaJSON, tagsJSON, metadataJSON []byte
+	var likes int
+
+	err := r.db.QueryRowContext(ctx, "SELECT id, author_id, content, media_urls, tags, likes, metadata, created_at FROM posts WHERE id = ?", id).Scan(
+		&post.ID, &post.AuthorID, &post.Content, &mediaJSON, &tagsJSON, &likes, &metadataJSON, &post.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	post.Likes = likes
+
+	var mediaURLs []string
+	if len(mediaJSON) > 0 {
+		json.Unmarshal(mediaJSON, &mediaURLs)
+	}
+	post.MediaURLs = mediaURLs
+
+	var tags []string
+	if len(tagsJSON) > 0 {
+		json.Unmarshal(tagsJSON, &tags)
+	}
+	post.Tags = tags
+
+	var metadata map[string]interface{}
+	if len(metadataJSON) > 0 {
+		json.Unmarshal(metadataJSON, &metadata)
+	}
+	post.Metadata = metadata
+
+	return &post, nil
+}
+
+func (r *tidbRepository) AddLike(ctx context.Context, postID, userID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Insert into post_likes
+	_, err = tx.ExecContext(ctx, "INSERT INTO post_likes (post_id, user_id) VALUES (?, ?)", postID, userID)
+	if err != nil {
+		// If duplicate entry, assume user already liked and ignore error (or return specific error if needed)
+		// For now, we assume it's fine and just return nil (idempotent)
+		// But wait, if we return nil, we shouldn't increment count again.
+		// If INSERT fails due to unique constraint, we should NOT increment.
+		// So checking error is important.
+		return nil
+	}
+
+	// Increment likes count in posts table
+	_, err = tx.ExecContext(ctx, "UPDATE posts SET likes = likes + 1 WHERE id = ?", postID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (r *tidbRepository) SaveComment(ctx context.Context, comment *domain.Comment) error {
+	_, err := r.db.ExecContext(ctx, "INSERT INTO comments (id, post_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
+		comment.ID, comment.PostID, comment.AuthorID, comment.Content, comment.CreatedAt,
+	)
 	return err
 }

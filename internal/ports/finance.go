@@ -34,4 +34,7 @@ type FinanceRepository interface {
 	UpdateLoan(ctx context.Context, loan *domain.Loan) error
 	
 	SaveReward(ctx context.Context, reward *domain.Reward) error
+	
+	// Transactional
+	TransferFunds(ctx context.Context, fromUserID, toUserID, assetID string, amount float64) error
 }

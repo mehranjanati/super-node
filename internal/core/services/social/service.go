@@ -25,8 +25,9 @@ type SocialServiceImpl struct {
 var _ ports.SocialService = (*SocialServiceImpl)(nil)
 
 // NewSocialService creates a new instance
-func NewSocialService(eventProd ports.EventProducer, wasmRunner ports.WasmRunner) *SocialServiceImpl {
+func NewSocialService(repo ports.SocialRepository, eventProd ports.EventProducer, wasmRunner ports.WasmRunner) *SocialServiceImpl {
 	return &SocialServiceImpl{
+		repo:       repo,
 		eventProd:  eventProd,
 		wasmRunner: wasmRunner,
 		posts:      make([]*domain.Post, 0),
@@ -68,48 +69,41 @@ func (s *SocialServiceImpl) CreatePost(ctx context.Context, authorID, content st
 		},
 	}
 
-	// 4. Publish Event to Redpanda (Real-time Feed)
+	// 4. Save to Repository
+	if err := s.repo.SavePost(ctx, post); err != nil {
+		return nil, fmt.Errorf("failed to save post: %w", err)
+	}
+
+	// 5. Publish Event to Redpanda (Real-time Feed)
 	eventPayload, _ := json.Marshal(post)
 	if err := s.eventProd.Produce(ctx, []byte("social-feed"), eventPayload); err != nil {
 		// Log error but don't fail the post creation necessarily, or do retry logic
 		fmt.Printf("Warning: Failed to publish to Redpanda: %v\n", err)
 	}
 
-	// 5. Save to Repository (In-memory for now)
-	s.posts = append([]*domain.Post{post}, s.posts...) // Prepend for latest first
-
 	return post, nil
 }
 
 func (s *SocialServiceImpl) GetFeed(ctx context.Context, filter domain.FeedFilter) ([]*domain.Post, error) {
-	// Simple slice logic
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = 10
-	}
-	if limit > len(s.posts) {
-		limit = len(s.posts)
-	}
-	return s.posts[:limit], nil
+	return s.repo.GetPosts(ctx, filter)
 }
 
 func (s *SocialServiceImpl) LikePost(ctx context.Context, postID, userID string) error {
-	// Find post
-	for _, p := range s.posts {
-		if p.ID == postID {
-			p.Likes++
-			// Publish Like Event
-			event := map[string]interface{}{
-				"type":    "like",
-				"post_id": postID,
-				"user_id": userID,
-			}
-			payload, _ := json.Marshal(event)
-			s.eventProd.Produce(ctx, []byte("social-engagement"), payload)
-			return nil
-		}
+	if err := s.repo.AddLike(ctx, postID, userID); err != nil {
+		return fmt.Errorf("failed to like post: %w", err)
 	}
-	return fmt.Errorf("post not found")
+
+	// Publish Like Event
+	event := map[string]interface{}{
+		"type":    "like",
+		"post_id": postID,
+		"user_id": userID,
+	}
+	payload, _ := json.Marshal(event)
+	// Best effort publish
+	s.eventProd.Produce(ctx, []byte("social-engagement"), payload)
+	
+	return nil
 }
 
 func (s *SocialServiceImpl) AddComment(ctx context.Context, postID, userID, content string) (*domain.Comment, error) {
@@ -119,6 +113,10 @@ func (s *SocialServiceImpl) AddComment(ctx context.Context, postID, userID, cont
 		AuthorID:  userID,
 		Content:   content,
 		CreatedAt: time.Now(),
+	}
+	
+	if err := s.repo.SaveComment(ctx, comment); err != nil {
+		return nil, fmt.Errorf("failed to save comment: %w", err)
 	}
 	
 	// Publish Comment Event

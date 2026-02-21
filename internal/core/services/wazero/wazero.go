@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+
 	"nexus-super-node-v3/internal/ports"
 
 	"github.com/tetratelabs/wazero"
@@ -12,7 +15,8 @@ import (
 
 // WazeroService is the service for the Wazero runner.
 type WazeroService struct {
-	runtime wazero.Runtime
+	runtime   wazero.Runtime
+	moduleDir string
 }
 
 // Ensure WazeroService implements ports.WasmRunner
@@ -28,18 +32,60 @@ func NewWazeroService() *WazeroService {
 		log.Printf("Failed to instantiate WASI: %v", err)
 	}
 
+	// Ensure directory exists
+	moduleDir := "./data/wasm"
+	if err := os.MkdirAll(moduleDir, 0755); err != nil {
+		log.Printf("Failed to create wasm directory: %v", err)
+	}
+
 	return &WazeroService{
-		runtime: r,
+		runtime:   r,
+		moduleDir: moduleDir,
 	}
 }
 
 // RunModule implements ports.WasmRunner.
 // It executes a function in a Wasm module provided as bytes or loaded from a store.
-// For simplicity, this implementation expects the moduleBytes to be provided via context or a separate store.
 func (s *WazeroService) RunModule(ctx context.Context, moduleID string, functionName string, params []uint64) ([]uint64, error) {
-	// In a real implementation, we would fetch moduleBytes from a registry/store using moduleID.
-	// For now, we'll assume moduleID is a placeholder and we need a way to get the bytes.
-	return nil, fmt.Errorf("RunModule not fully implemented: need module store for %s", moduleID)
+	// 1. Read file
+	// Basic security check to prevent directory traversal
+	if filepath.Base(moduleID) != moduleID {
+		return nil, fmt.Errorf("invalid module ID: %s", moduleID)
+	}
+	
+	modulePath := filepath.Join(s.moduleDir, moduleID+".wasm")
+	moduleBytes, err := os.ReadFile(modulePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read module %s from %s: %w", moduleID, modulePath, err)
+	}
+
+	// 2. Compile
+	compiled, err := s.runtime.CompileModule(ctx, moduleBytes)
+	if err != nil {
+		return nil, fmt.Errorf("compile failed: %w", err)
+	}
+	defer compiled.Close(ctx)
+
+	// 3. Instantiate
+	mod, err := s.runtime.InstantiateModule(ctx, compiled, wazero.NewModuleConfig().WithStdout(os.Stdout).WithStderr(os.Stderr))
+	if err != nil {
+		return nil, fmt.Errorf("instantiate failed: %w", err)
+	}
+	defer mod.Close(ctx)
+
+	// 4. Get function
+	fn := mod.ExportedFunction(functionName)
+	if fn == nil {
+		return nil, fmt.Errorf("function %s not found in module %s", functionName, moduleID)
+	}
+
+	// 5. Call
+	results, err := fn.Call(ctx, params...)
+	if err != nil {
+		return nil, fmt.Errorf("execution failed: %w", err)
+	}
+
+	return results, nil
 }
 
 // ExecuteModule executes a function from a Wasm module.

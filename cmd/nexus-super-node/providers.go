@@ -32,7 +32,7 @@ func newConfig() (*config.Config, error) {
 // 	}
 // }
 
-func newTiDBRepository(ctx context.Context, cfg *config.Config) (ports.UserRepository, ports.FinanceRepository, ports.AppDataRepository, error) {
+func newTiDBRepository(ctx context.Context, cfg *config.Config) (ports.UserRepository, ports.FinanceRepository, ports.AppDataRepository, ports.SocialRepository, error) {
 	return tidb.NewTiDBRepository(ctx, cfg.TiDB.DSN)
 }
 
@@ -69,6 +69,6 @@ func newChatService(cfg *config.Config, claw *openclaw.Client) ports.ChatService
 	return chat.NewUnifiedChatService(cfg, claw)
 }
 
-func newSocialService(rp *redpanda.Client, wasm *wazero.WazeroService) ports.SocialService {
-	return social.NewSocialService(rp, wasm)
+func newSocialService(repo ports.SocialRepository, rp *redpanda.Client, wasm *wazero.WazeroService) ports.SocialService {
+	return social.NewSocialService(repo, rp, wasm)
 }

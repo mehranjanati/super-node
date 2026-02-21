@@ -1,19 +1,27 @@
 package rivet
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"nexus-super-node-v3/internal/ports"
+)
 
 // RivetService is the service for the Rivet gRPC client.
-type RivetService struct{}
+type RivetService struct {
+	engine ports.RivetEngine
+}
 
 // NewRivetService creates a new RivetService.
-func NewRivetService() *RivetService {
-	return &RivetService{}
+func NewRivetService(engine ports.RivetEngine) *RivetService {
+	return &RivetService{
+		engine: engine,
+	}
 }
 
 // ExecuteGraph executes a graph on the Rivet server.
-func (s *RivetService) ExecuteGraph(graphID string, inputs map[string]interface{}) (map[string]interface{}, error) {
-	// In a real implementation, this would communicate with the Rivet server.
-	// For now, we'll just return a success message.
-	fmt.Printf("Executing graph %s with inputs %v\n", graphID, inputs)
-	return map[string]interface{}{"output": "success"}, nil
+func (s *RivetService) ExecuteGraph(ctx context.Context, graphID string, inputs map[string]interface{}) (map[string]interface{}, error) {
+	if s.engine == nil {
+		return nil, fmt.Errorf("rivet engine is not initialized")
+	}
+	return s.engine.ExecuteGraph(ctx, graphID, inputs)
 }

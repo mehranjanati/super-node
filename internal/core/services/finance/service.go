@@ -46,26 +46,8 @@ func (s *FinanceServiceImpl) GetUserBalance(ctx context.Context, userID, assetID
 }
 
 func (s *FinanceServiceImpl) Transfer(ctx context.Context, fromUserID, toUserID, assetID string, amount float64) error {
-	// Simple transfer logic (without transaction for brevity, but should be transactional)
-	senderBalance, err := s.repo.GetBalance(ctx, fromUserID, assetID)
-	if err != nil {
-		return err
-	}
-
-	if senderBalance.Balance < amount {
-		return fmt.Errorf("insufficient balance")
-	}
-
-	if err := s.repo.UpdateUserBalance(ctx, fromUserID, assetID, -amount); err != nil {
-		return err
-	}
-
-	if err := s.repo.UpdateUserBalance(ctx, toUserID, assetID, amount); err != nil {
-		// Rollback sender would be needed here in a real TX
-		return err
-	}
-
-	return nil
+	// Use repository transaction for ACID guarantees
+	return s.repo.TransferFunds(ctx, fromUserID, toUserID, assetID, amount)
 }
 
 func (s *FinanceServiceImpl) RequestLoan(ctx context.Context, borrowerID, collateralID string, amount float64) (*domain.Loan, error) {
