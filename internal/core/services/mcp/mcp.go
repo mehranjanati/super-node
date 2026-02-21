@@ -96,9 +96,16 @@ func (s *MCPService) ExecuteTool(toolBeltName, toolName string, args ...interfac
 
 	if ok {
 		// Prepare parameters for MCP call
+		var arguments interface{}
+		if len(args) == 1 {
+			arguments = args[0]
+		} else {
+			arguments = args
+		}
+
 		params := map[string]interface{}{
 			"name":      toolName,
-			"arguments": args,
+			"arguments": arguments,
 		}
 
 		// In MCP protocol, executing a tool is 'tools/call'

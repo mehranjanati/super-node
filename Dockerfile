@@ -23,11 +23,16 @@ RUN go mod tidy
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -o /nexus-super-node ./cmd/nexus-super-node
 
-# Stage 2: Create the final, minimal image
-FROM scratch
+# Stage 2: Create the final image with runtime dependencies
+FROM alpine:latest
 
-# Copy CA certificates for HTTPS requests
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# Install runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    nodejs \
+    npm \
+    git \
+    bash
 
 # Copy the static binary from the builder stage
 COPY --from=builder /nexus-super-node /nexus-super-node

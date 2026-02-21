@@ -21,6 +21,23 @@ The system is designed as a **Super Node** that orchestrates the entire lifecycl
 | **MLOps Logic** | Rust (Wasm) | Lightweight, portable reward functions & data curation. |
 | **Inference** | llama-server | Local LLM inference (OpenAI compatible API). |
 | **Backend** | Go (Echo + Uber Fx) | API Gateway, business logic, and system integration. |
+| **Agent Orchestrator** | **VoltAgent** | Central nervous system managing MCP tools, Temporal workflows, and AI context. |
+
+---
+
+## ⚡ VoltAgent: The Reasoning Engine
+
+**VoltAgent** is the core reasoning service that powers the Super Node. It is responsible for:
+1.  **Tool Abstraction (MCP)**: Unifies local functions, remote MCP servers, and system workflows into a single tool interface.
+2.  **Workflow Orchestration**: Triggers complex, long-running Temporal workflows (e.g., "Deploy Website", "Crypto Analysis") from simple chat commands.
+3.  **Context Management**: (In Progress) Manages short-term and long-term memory for coherent conversations.
+
+### Supported Tools
+- **System Tools**:
+  - `system__deploy_website`: Generates UI/Code, pushes to Git, builds Wasm, and deploys.
+  - `system__crypto_analysis`: Deep market analysis pipeline with human-in-the-loop approval.
+  - `system__human_handoff`: Escalate to a human operator via Matrix/LiveKit.
+- **MCP Tools**: Connects to any Model Context Protocol (MCP) server.
 
 ---
 

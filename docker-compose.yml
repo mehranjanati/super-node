@@ -220,6 +220,8 @@ services:
       - NEXUS_POSTGRES_URL=postgres://postgres:password@postgres:5432/chatwoot_dev?sslmode=disable
       - NEXUS_HASURA_URL=http://hasura:8080/v1/graphql
       - NEXUS_SERVER_PORT=3000
+      - NEXUS_OPENAI_API_KEY=${OPENAI_API_KEY} # Load from host env
+      - TEMPORAL_HOST_PORT=temporal:7233
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/run/docker.sock:/run/podman/podman.sock

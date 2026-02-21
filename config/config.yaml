@@ -6,6 +6,12 @@ redpanda:
   topic: "market-analysis-results"
   group_id: "nexus_market_group"
 
+voltagent:
+  enabled: true
+  model: "gpt-4-turbo" # Default model for reasoning
+  system_prompt_path: "./config/prompts/system.md"
+  enable_memory: false # Set to true when VectorDB is ready
+
 agents:
   concurrency: 50 # High concurrency setting
 

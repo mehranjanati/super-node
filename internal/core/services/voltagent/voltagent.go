@@ -3,6 +3,7 @@ package voltagent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"nexus-super-node-v3/internal/adapters/ai"
 	"nexus-super-node-v3/internal/core/domain"
@@ -256,7 +257,32 @@ func (s *VoltAgentService) ExecuteTool(toolID string, args map[string]interface{
 		}, nil
 	}
 
-	// Original MCP routing (simplified)
-	// In a real scenario, we'd parse the toolID and route correctly
-	return s.mcpSvc.ExecuteTool("crypto", toolID, args["args"])
+	if strings.HasPrefix(toolID, "mcp__") && strings.HasSuffix(toolID, "__execute") {
+		// Format: mcp__{serverID}__execute
+		parts := strings.Split(toolID, "__")
+		if len(parts) >= 3 {
+			serverID := parts[1]
+			toolName, ok1 := args["tool_name"].(string)
+			toolArgs, ok2 := args["arguments"]
+			if ok1 && ok2 {
+				return s.mcpSvc.ExecuteTool(serverID, toolName, toolArgs)
+			}
+			return nil, fmt.Errorf("invalid arguments for dynamic tool execution: missing tool_name or arguments")
+		}
+	}
+
+	// Handle local tools (format: belt__tool)
+	if strings.Contains(toolID, "__") {
+		parts := strings.SplitN(toolID, "__", 2)
+		beltName := parts[0]
+		toolName := parts[1]
+		// Local tools expect "args" in the arguments
+		if toolArgs, ok := args["args"]; ok {
+			return s.mcpSvc.ExecuteTool(beltName, toolName, toolArgs)
+		}
+		// Fallback: try passing all args if "args" key is missing (though manifest defines it)
+		return s.mcpSvc.ExecuteTool(beltName, toolName, args)
+	}
+
+	return nil, fmt.Errorf("unknown tool ID format: %s", toolID)
 }

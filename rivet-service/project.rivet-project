@@ -1,0 +1,20 @@
+metadata:
+  version: 1
+graphs:
+  example-graph:
+    nodes:
+      - id: start
+        type: graphInput
+        data:
+          dataType: string
+          id: input
+      - id: end
+        type: graphOutput
+        data:
+          dataType: string
+          id: output
+    connections:
+      - input: output
+        output: input
+        from: start
+        to: end
