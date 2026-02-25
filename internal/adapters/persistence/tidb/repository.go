@@ -17,23 +17,24 @@ type tidbRepository struct {
 }
 
 // NewTiDBRepository creates a new TiDB/MySQL repository
-func NewTiDBRepository(ctx context.Context, dsn string) (ports.UserRepository, ports.FinanceRepository, ports.AppDataRepository, ports.SocialRepository, error) {
+func NewTiDBRepository(ctx context.Context, dsn string) (ports.UserRepository, ports.FinanceRepository, ports.AppDataRepository, ports.SocialRepository, ports.AgentRepository, error) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to open tidb connection: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("failed to open tidb connection: %w", err)
 	}
 
 	if err := db.PingContext(ctx); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to ping tidb: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("failed to ping tidb: %w", err)
 	}
 
 	// Ensure tables exist (Simple migration for now)
 	if err := migrate(ctx, db); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to migrate tidb schema: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("failed to migrate tidb schema: %w", err)
 	}
 
 	repo := &tidbRepository{db: db}
-	return repo, repo, repo, repo, nil
+	agentRepo := newTiDBAgentRepository(db)
+	return repo, repo, repo, repo, agentRepo, nil
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
@@ -91,13 +92,18 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			metadata JSON,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);`,
-		`CREATE TABLE IF NOT EXISTS comments (
+		`CREATE TABLE IF NOT EXISTS agents (
 			id VARCHAR(255) PRIMARY KEY,
-			post_id VARCHAR(255) NOT NULL,
-			author_id VARCHAR(255) NOT NULL,
-			content TEXT,
+			name VARCHAR(255) NOT NULL,
+			description TEXT,
+			type VARCHAR(50) NOT NULL,
+			status VARCHAR(50) NOT NULL,
+			owner_id VARCHAR(255) NOT NULL,
+			avatar VARCHAR(255),
+			config JSON,
+			performance JSON,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			INDEX idx_post_id (post_id)
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);`,
 		`CREATE TABLE IF NOT EXISTS post_likes (
 			post_id VARCHAR(255) NOT NULL,

@@ -29,12 +29,13 @@ type EchoGateway struct {
 	chatSvc    ports.ChatService
 	socialSvc  ports.SocialService
 	financeSvc ports.FinanceService
+	agentSvc   ports.AgentService
 	redpanda   ports.EventProducer
 	claw       *openclaw.Client
 }
 
 // NewEchoGateway creates a new EchoGateway.
-func NewEchoGateway(userRepo ports.UserRepository, mcpSvc *mcp.MCPService, voltSvc *voltagent.VoltAgentService, chatSvc ports.ChatService, socialSvc ports.SocialService, financeSvc ports.FinanceService, rp ports.EventProducer, claw *openclaw.Client) *EchoGateway {
+func NewEchoGateway(userRepo ports.UserRepository, mcpSvc *mcp.MCPService, voltSvc *voltagent.VoltAgentService, chatSvc ports.ChatService, socialSvc ports.SocialService, financeSvc ports.FinanceService, agentSvc ports.AgentService, rp ports.EventProducer, claw *openclaw.Client) *EchoGateway {
 	e := echo.New()
 
 	// Middleware
@@ -59,6 +60,7 @@ func NewEchoGateway(userRepo ports.UserRepository, mcpSvc *mcp.MCPService, voltS
 		chatSvc:    chatSvc,
 		socialSvc:  socialSvc,
 		financeSvc: financeSvc,
+		agentSvc:   agentSvc,
 		redpanda:   rp,
 		claw:       claw,
 	}
@@ -580,38 +582,89 @@ func (g *EchoGateway) setupOpenClawRoutes() {
 func (g *EchoGateway) setupAgentRoutes() {
 	agents := g.echo.Group("/agents")
 
-	// List agents
-	agents.GET("", func(c echo.Context) error {
-		// Mock agent list
-		return c.JSON(http.StatusOK, []map[string]interface{}{
-			{
-				"id":     "agent-v1.wasm",
-				"name":   "Wasm Agent V1",
-				"status": "active",
-			},
-			{
-				"id":     "overlord-1",
-				"name":   "Overlord Agent",
-				"status": "idle",
-			},
-		})
+	// Create Agent
+	agents.POST("", func(c echo.Context) error {
+		var agent domain.Agent
+		if err := c.Bind(&agent); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		}
+
+		// TODO: Extract owner ID from context/auth
+		// agent.OwnerID = c.Get("user_id").(string)
+		if agent.OwnerID == "" {
+			agent.OwnerID = "default-owner" // Fallback for now
+		}
+
+		if err := g.agentSvc.CreateAgent(c.Request().Context(), &agent); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		return c.JSON(http.StatusCreated, agent)
 	})
 
-	// Get agent files (for WebContainer)
-	agents.GET("/:id/files", func(c echo.Context) error {
-		// Mock file structure for WebContainer
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"index.js": map[string]interface{}{
-				"file": map[string]string{
-					"contents": "console.log('Hello from Super Node Agent!');",
-				},
-			},
-			"package.json": map[string]interface{}{
-				"file": map[string]string{
-					"contents": `{"name":"agent-v1","type":"module","dependencies":{}}`,
-				},
-			},
-		})
+	// List Agents
+	agents.GET("", func(c echo.Context) error {
+		// TODO: Extract owner ID from context/auth
+		ownerID := "default-owner"
+
+		agentsList, err := g.agentSvc.ListAgents(c.Request().Context(), ownerID)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		return c.JSON(http.StatusOK, agentsList)
+	})
+
+	// Get Agent by ID
+	agents.GET("/:id", func(c echo.Context) error {
+		id := c.Param("id")
+		agent, err := g.agentSvc.GetAgent(c.Request().Context(), id)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Agent not found"})
+		}
+		return c.JSON(http.StatusOK, agent)
+	})
+
+	// Update Agent
+	agents.PUT("/:id", func(c echo.Context) error {
+		id := c.Param("id")
+		var agent domain.Agent
+		if err := c.Bind(&agent); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		}
+		agent.ID = id // Ensure ID matches URL
+
+		if err := g.agentSvc.UpdateAgent(c.Request().Context(), &agent); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, agent)
+	})
+
+	// Delete Agent
+	agents.DELETE("/:id", func(c echo.Context) error {
+		id := c.Param("id")
+		if err := g.agentSvc.DeleteAgent(c.Request().Context(), id); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	// Deploy Agent
+	agents.POST("/:id/deploy", func(c echo.Context) error {
+		id := c.Param("id")
+		if err := g.agentSvc.DeployAgent(c.Request().Context(), id); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, map[string]string{"status": "deploying"})
+	})
+
+	// Pause Agent
+	agents.POST("/:id/pause", func(c echo.Context) error {
+		id := c.Param("id")
+		if err := g.agentSvc.PauseAgent(c.Request().Context(), id); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, map[string]string{"status": "paused"})
 	})
 }
 
