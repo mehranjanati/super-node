@@ -1,6 +1,54 @@
 package domain
 
+import "time"
+
+// AgentType defines the type of agent
+type AgentType string
+
+const (
+	AgentTypeTrading   AgentType = "trading"
+	AgentTypeAnalytics AgentType = "analytics"
+	AgentTypeSocial    AgentType = "social"
+	AgentTypeContent   AgentType = "content"
+	AgentTypeCustom    AgentType = "custom"
+)
+
+// AgentStatus defines the current status of the agent
+type AgentStatus string
+
+const (
+	AgentStatusActive    AgentStatus = "active"
+	AgentStatusPaused    AgentStatus = "paused"
+	AgentStatusError     AgentStatus = "error"
+	AgentStatusDeploying AgentStatus = "deploying"
+)
+
+// AgentPerformance metrics for the agent
+type AgentPerformance struct {
+	ROI         float64   `json:"roi"`          // Return on Investment percentage
+	Trades      int       `json:"trades"`       // Total number of trades/actions
+	Uptime      float64   `json:"uptime"`       // Uptime percentage
+	SuccessRate float64   `json:"successRate"`  // Success rate percentage
+	LastActive  time.Time `json:"lastActive"`
+}
+
+// Agent represents an AI agent in the system
+type Agent struct {
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Type        AgentType              `json:"type"`
+	Status      AgentStatus            `json:"status"`
+	Performance AgentPerformance       `json:"performance"`
+	OwnerID     string                 `json:"owner"`
+	Avatar      string                 `json:"avatar,omitempty"`
+	Config      map[string]interface{} `json:"config,omitempty"`
+	CreatedAt   time.Time              `json:"createdAt"`
+	UpdatedAt   time.Time              `json:"updatedAt"`
+}
+
 // AgentConfig defines the dynamic personality and capabilities of an agent
+// This is now a subset or part of the Agent's Config map
 type AgentConfig struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`

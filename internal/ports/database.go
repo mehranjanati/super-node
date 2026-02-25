@@ -27,4 +27,5 @@ type AppDataRepository interface {
 type Database interface {
 	UserRepository
 	AppDataRepository
+	AgentRepository
 }

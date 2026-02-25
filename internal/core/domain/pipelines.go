@@ -51,7 +51,7 @@ var (
 				ID:           "execute_trade",
 				ActivityName: "ExecuteTradeActivityWrapper",
 				Args: map[string]interface{}{
-					"token":  "{{analysis.TopPick}}",
+					"token":  "{{analysis.top_pick}}",
 					"amount": 100.0,
 				},
 				ResultKey: "trade_result",
