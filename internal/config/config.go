@@ -23,6 +23,7 @@ type Config struct {
 	Matrix   MatrixConfig   `mapstructure:"matrix"`
 	LiveKit  LiveKitConfig  `mapstructure:"livekit"`
 	TiDB     TiDBConfig     `mapstructure:"tidb"`
+	Role     string         `mapstructure:"role"` // monolith, api, worker, consumer
 }
 
 type TiDBConfig struct {
@@ -112,6 +113,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("postgres.url", "postgres://postgres:password@localhost:5432/chatwoot_dev?sslmode=disable")
 	viper.SetDefault("rivet.service_url", "localhost:50051")
 	viper.SetDefault("benthos.api_url", "http://wasm-processor:4195")
+	viper.SetDefault("role", "monolith")
 
 	defaultMCPServers := []map[string]interface{}{
 		{

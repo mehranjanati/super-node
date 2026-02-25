@@ -32,7 +32,7 @@ func newConfig() (*config.Config, error) {
 // 	}
 // }
 
-func newTiDBRepository(ctx context.Context, cfg *config.Config) (ports.UserRepository, ports.FinanceRepository, ports.AppDataRepository, ports.SocialRepository, error) {
+func newTiDBRepository(ctx context.Context, cfg *config.Config) (ports.UserRepository, ports.FinanceRepository, ports.AppDataRepository, ports.SocialRepository, ports.AgentRepository, error) {
 	return tidb.NewTiDBRepository(ctx, cfg.TiDB.DSN)
 }
 
