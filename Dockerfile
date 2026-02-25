@@ -1,5 +1,12 @@
 # Stage 1: Build the application
-FROM golang:1.25.5 AS builder
+FROM golang:1.22-alpine AS builder
+
+# Install build dependencies for Alpine
+RUN apk add --no-cache \
+    protoc \
+    protobuf-dev \
+    git \
+    build-base
 
 WORKDIR /app
 
@@ -10,13 +17,17 @@ COPY go.mod go.sum ./
 # Dependencies will be cached if the go.mod and go.sum files are not changed
 RUN go mod download
 
+# Install protobuf generators
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28 && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2
+
 # Copy the rest of the source code
 COPY . .
 
-# Generate protobuf code
-RUN apt-get update && apt-get install -y protobuf-compiler
-RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28 && go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2
+# Set path for protoc-gen-go
 ENV PATH="$PATH:$(go env GOPATH)/bin"
+
+# Generate protobuf code
 RUN protoc --go_out=. --go-grpc_out=. proto/rivet.proto
 RUN go mod tidy
 

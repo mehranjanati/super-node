@@ -1,0 +1,200 @@
+version: "3.8"
+
+networks:
+  nexus-net:
+    driver: bridge
+
+services:
+  # --- DATA PLANE ---
+  tidb:
+    image: pingcap/tidb:latest
+    ports:
+      - "4001:4000"
+      - "10081:10080"
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://host.docker.internal:9092
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    networks:
+      - nexus-net
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: nexus_temporal
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    networks:
+      - nexus-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  hasura:
+    image: hasura/graphql-engine:v2.3.0
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - tidb
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:password@postgres:5432/nexus_temporal
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_ADMIN_SECRET: "myadminsecretkey"
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  # --- CONTROL PLANE ---
+  temporal:
+    image: temporalio/auto-setup:latest
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=password
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "7233:7233"
+    networks:
+      - nexus-net
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "8081:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+    networks:
+      - nexus-net
+
+  # --- REALTIME PLANE ---
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    volumes:
+      - ./config/livekit.yaml:/livekit.yaml
+    networks:
+      - nexus-net
+
+  sip:
+    image: livekit/sip
+    entrypoint:
+      - livekit-sip
+      - --config
+      - /sip.yaml
+    ports:
+      - "5060:5060"
+      - "5060:5060/udp"
+    depends_on:
+      - livekit
+      - redis
+    volumes:
+      - ./config/sip.yaml:/sip.yaml
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  matrix:
+    image: matrixconduit/conduit:latest
+    environment:
+      CONDUIT_SERVER_NAME: "localhost"
+      CONDUIT_DATABASE_PATH: "/var/lib/matrix-conduit/"
+      CONDUIT_PORT: 6167
+      CONDUIT_ALLOW_REGISTRATION: "true"
+    ports:
+      - "6167:6167"
+    networks:
+      - nexus-net
+
+  # --- SIDE CARS & CONNECTORS ---
+  
+  # Rivet Service (AI Visual Programming Engine)
+  rivet-service:
+    image: nexus-rivet-service:latest
+    build: ./rivet-service
+    ports:
+      - "50051:50051"
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  # OpenClaw (Multi-Channel Gateway)
+  openclaw:
+    image: openclaw/gateway:latest
+    ports:
+      - "8095:8095"
+    environment:
+      - OPENCLAW_PORT=8095
+      - MATRIX_HOMESERVER_URL=http://matrix:6167
+      - REDPANDA_BROKERS=redpanda:9092
+    depends_on:
+      - matrix
+      - redpanda
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  # Redpanda Connect (Benthos) - Data Pipeline
+  redpanda-connect:
+    image: docker.redpanda.com/redpandadata/connect:latest
+    volumes:
+      - ./config/connect.yaml:/connect.yaml
+    command: ["-c", "/connect.yaml"]
+    depends_on:
+      - redpanda
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  # Wasm Agent (Edge Runtime)
+  wasm-agent:
+    image: secondstate/rust-example-server
+    runtime: io.containerd.wasmtime.v1
+    platform: wasi/wasm
+    ports:
+      - "8090:8080"
+    networks:
+      - nexus-net
+    restart: unless-stopped
+

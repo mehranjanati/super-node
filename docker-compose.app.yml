@@ -1,0 +1,91 @@
+version: "3.8"
+
+networks:
+  nexus-net:
+    driver: bridge
+
+services:
+  # --- MONOLITH ROLE (ALL-IN-ONE) ---
+  # Use this for Development or Single-Node Deployments
+  nexus-monolith:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: nexus-super-node:latest
+    container_name: nexus-monolith
+    environment:
+      - NEXUS_ROLE=monolith
+      - NEXUS_SERVER_PORT=8080
+      - NEXUS_TIDB_DSN=root:@tcp(tidb:4000)/nexus
+      - NEXUS_REDPANDA_BROKERS=redpanda:9092
+      - NEXUS_REDIS_ADDR=redis:6379
+      - TEMPORAL_HOST_PORT=temporal:7233
+      - RIVET_SERVICE_URL=rivet-service:50051
+      - NEXUS_OPENCLAW_GATEWAY_URL=http://openclaw:8095
+      - NEXUS_HASURA_URL=http://hasura:8080/v1/graphql
+      - NEXUS_POSTGRES_URL=postgres://postgres:password@postgres:5432/nexus_temporal?sslmode=disable
+    ports:
+      - "8080:8080"
+    networks:
+      - nexus-net
+    restart: unless-stopped
+    profiles: ["monolith"]
+
+  # --- API ROLE ---
+  nexus-api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: nexus-super-node:latest
+    container_name: nexus-api-1
+    environment:
+      - NEXUS_ROLE=api
+      - NEXUS_SERVER_PORT=8080
+      - NEXUS_TIDB_DSN=root:@tcp(tidb:4000)/nexus
+      - NEXUS_REDPANDA_BROKERS=redpanda:9092
+      - NEXUS_REDIS_ADDR=redis:6379
+      - TEMPORAL_HOST_PORT=temporal:7233
+      - RIVET_SERVICE_URL=rivet-service:50051
+      - NEXUS_OPENCLAW_GATEWAY_URL=http://openclaw:8095
+      - NEXUS_HASURA_URL=http://hasura:8080/v1/graphql
+      - NEXUS_POSTGRES_URL=postgres://postgres:password@postgres:5432/nexus_temporal?sslmode=disable
+    ports:
+      - "8080:8080"
+    networks:
+      - nexus-net
+    depends_on:
+      - nexus-worker # API might need workers to be ready to accept tasks? No, decoupled via queues.
+    restart: always
+
+  # --- WORKER ROLE ---
+  nexus-worker:
+    image: nexus-super-node:latest
+    container_name: nexus-worker-1
+    environment:
+      - NEXUS_ROLE=worker
+      - NEXUS_TIDB_DSN=root:@tcp(tidb:4000)/nexus
+      - NEXUS_REDPANDA_BROKERS=redpanda:9092
+      - TEMPORAL_HOST_PORT=temporal:7233
+      - RIVET_SERVICE_URL=rivet-service:50051
+      - NEXUS_OPENCLAW_GATEWAY_URL=http://openclaw:8095
+      # Workers don't need to expose HTTP ports usually, but for metrics they might
+    networks:
+      - nexus-net
+    restart: always
+    deploy:
+      replicas: 2 # Simulate scaling workers
+
+  # --- CONSUMER ROLE ---
+  nexus-consumer:
+    image: nexus-super-node:latest
+    container_name: nexus-consumer-1
+    environment:
+      - NEXUS_ROLE=consumer
+      - NEXUS_TIDB_DSN=root:@tcp(tidb:4000)/nexus
+      - NEXUS_REDPANDA_BROKERS=redpanda:9092
+      - NEXUS_REDPANDA_GROUP_ID=nexus_market_consumer_group
+      - TEMPORAL_HOST_PORT=temporal:7233
+      - RIVET_SERVICE_URL=rivet-service:50051
+    networks:
+      - nexus-net
+    restart: always
