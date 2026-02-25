@@ -17,8 +17,6 @@ type SocialServiceImpl struct {
 	repo       ports.SocialRepository
 	eventProd  ports.EventProducer
 	wasmRunner ports.WasmRunner
-	// In-memory cache for demo purposes
-	posts []*domain.Post
 }
 
 // Ensure implementation
@@ -30,7 +28,6 @@ func NewSocialService(repo ports.SocialRepository, eventProd ports.EventProducer
 		repo:       repo,
 		eventProd:  eventProd,
 		wasmRunner: wasmRunner,
-		posts:      make([]*domain.Post, 0),
 	}
 }
 
@@ -102,7 +99,7 @@ func (s *SocialServiceImpl) LikePost(ctx context.Context, postID, userID string)
 	payload, _ := json.Marshal(event)
 	// Best effort publish
 	s.eventProd.Produce(ctx, []byte("social-engagement"), payload)
-	
+
 	return nil
 }
 
@@ -114,14 +111,14 @@ func (s *SocialServiceImpl) AddComment(ctx context.Context, postID, userID, cont
 		Content:   content,
 		CreatedAt: time.Now(),
 	}
-	
+
 	if err := s.repo.SaveComment(ctx, comment); err != nil {
 		return nil, fmt.Errorf("failed to save comment: %w", err)
 	}
-	
+
 	// Publish Comment Event
 	payload, _ := json.Marshal(comment)
 	s.eventProd.Produce(ctx, []byte("social-engagement"), payload)
-	
+
 	return comment, nil
 }

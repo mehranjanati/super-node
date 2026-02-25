@@ -67,7 +67,12 @@ func (s *WazeroService) RunModule(ctx context.Context, moduleID string, function
 	defer compiled.Close(ctx)
 
 	// 3. Instantiate
-	mod, err := s.runtime.InstantiateModule(ctx, compiled, wazero.NewModuleConfig().WithStdout(os.Stdout).WithStderr(os.Stderr))
+	// Use a config that inherits stdout/stderr for logging
+	modConfig := wazero.NewModuleConfig().
+		WithStdout(os.Stdout).
+		WithStderr(os.Stderr)
+
+	mod, err := s.runtime.InstantiateModule(ctx, compiled, modConfig)
 	if err != nil {
 		return nil, fmt.Errorf("instantiate failed: %w", err)
 	}
@@ -88,18 +93,23 @@ func (s *WazeroService) RunModule(ctx context.Context, moduleID string, function
 	return results, nil
 }
 
-// ExecuteModule executes a function from a Wasm module.
+// ExecuteModule executes a function from a Wasm module provided as bytes.
 // Currently supports simple void functions or returning basic integers.
-// For complex types, we need memory manipulation (omitted for brevity).
 func (s *WazeroService) ExecuteModule(ctx context.Context, moduleBytes []byte, functionName string) (uint64, error) {
 	// Compile the module
 	compiled, err := s.runtime.CompileModule(ctx, moduleBytes)
 	if err != nil {
 		return 0, fmt.Errorf("compile failed: %w", err)
 	}
+	defer compiled.Close(ctx)
 
 	// Instantiate the module
-	mod, err := s.runtime.InstantiateModule(ctx, compiled, wazero.NewModuleConfig().WithStdout(nil).WithStderr(nil))
+	// Use a config that inherits stdout/stderr for logging
+	modConfig := wazero.NewModuleConfig().
+		WithStdout(os.Stdout).
+		WithStderr(os.Stderr)
+
+	mod, err := s.runtime.InstantiateModule(ctx, compiled, modConfig)
 	if err != nil {
 		return 0, fmt.Errorf("instantiate failed: %w", err)
 	}
