@@ -1,10 +1,12 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
-	"nexus-super-node-v3/internal/core/domain"
 	"strings"
 	"time"
+
+	"nexus-super-node-v3/internal/core/domain"
 
 	"go.temporal.io/sdk/workflow"
 )
@@ -85,31 +87,26 @@ func DynamicPipelineWorkflow(ctx workflow.Context, pipelineDef domain.PipelineDe
 }
 
 // resolveArgs replaces placeholders like "{{.project_name}}" with actual values from context.
-// This is a simplified implementation. Real-world would use text/template.
 func resolveArgs(args map[string]interface{}, context map[string]interface{}) ([]interface{}, error) {
-	// In Temporal ExecuteActivity, args are passed as variadic interface{}.
-	// However, our activities usually take specific structs (e.g. WebsiteDeploymentParams).
-	// This generic workflow implies that Activities need to accept a map or we need strict mapping.
-	//
-	// Strategy A: All dynamic activities take (ctx, map[string]interface{}) -> (map[string]interface{}, error)
-	// Strategy B: We map args to a struct (complex reflection).
-	//
-	// For this implementation, we will assume Strategy A for truly dynamic activities,
-	// OR we assume 'args' contains the exact single argument struct if the activity expects one.
-
-	// Let's assume for now that we pass the whole 'args' map as the first argument,
-	// and let the activity handle parsing. This requires wrapper activities.
-
 	resolved := make(map[string]interface{})
 	for k, v := range args {
 		strVal, ok := v.(string)
-		if ok && strings.HasPrefix(strVal, "{{") && strings.HasSuffix(strVal, "}}") {
-			key := strings.TrimSuffix(strings.TrimPrefix(strVal, "{{"), "}}")
-			key = strings.TrimSpace(key)
-			if val, exists := context[key]; exists {
-				resolved[k] = val
+		if ok && strings.Contains(strVal, "{{") && strings.Contains(strVal, "}}") {
+			// Handle simple exact match "{{key}}"
+			if strings.HasPrefix(strVal, "{{") && strings.HasSuffix(strVal, "}}") {
+				key := strings.TrimSuffix(strings.TrimPrefix(strVal, "{{"), "}}")
+				key = strings.TrimSpace(key)
+				if val, found := lookupValue(context, key); found {
+					resolved[k] = val
+				} else {
+					resolved[k] = v // Keep original if not found
+				}
 			} else {
-				// Keep original if missing, or error out?
+				// Handle string interpolation "Hello {{name}}"
+				// Simple implementation: replace only exact {{key}} occurrences
+				// A regex based approach would be better for multiple replacements
+				// For now, let's keep it simple or use strings.Replace
+				// TODO: Implement full template engine support
 				resolved[k] = v
 			}
 		} else {
@@ -119,4 +116,49 @@ func resolveArgs(args map[string]interface{}, context map[string]interface{}) ([
 
 	// Return as a single argument (the map)
 	return []interface{}{resolved}, nil
+}
+
+// lookupValue resolves dot notation keys like "analysis.TopPick"
+func lookupValue(data map[string]interface{}, path string) (interface{}, bool) {
+	parts := strings.Split(path, ".")
+	if len(parts) == 0 {
+		return nil, false
+	}
+
+	current := interface{}(data)
+	for _, part := range parts {
+		// If current is nil, stop
+		if current == nil {
+			return nil, false
+		}
+
+		// Check if current is a map
+		if m, ok := current.(map[string]interface{}); ok {
+			val, exists := m[part]
+			if !exists {
+				return nil, false
+			}
+			current = val
+			continue
+		}
+
+		// Check if current is a struct (convert to map via JSON for simplicity)
+		// This is expensive but handles arbitrary structs without complex reflection
+		jsonBytes, err := json.Marshal(current)
+		if err != nil {
+			return nil, false
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal(jsonBytes, &m); err == nil {
+			if val, exists := m[part]; exists {
+				current = val
+				continue
+			}
+		}
+
+		// If neither map nor convertible struct, fail
+		return nil, false
+	}
+
+	return current, true
 }

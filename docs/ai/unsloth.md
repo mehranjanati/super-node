@@ -1,6 +1,6 @@
 # AI Model Training with Unsloth
 
-This document details how the Nexus Super Node utilizes **Unsloth** for high-performance, memory-efficient fine-tuning of Large Language Models (LLMs). We leverage **LoRA (Low-Rank Adaptation)** and **QLoRA (Quantized LoRA)** to enable decentralized training on consumer-grade GPUs.
+This ument details how the Nexus Super Node utilizes **Unsloth** for high-performance, memory-efficient fine-tuning of Large Language Models (LLMs). We leverage **LoRA (Low-Rank Adaptation)** and **QLoRA (Quantized LoRA)** to enable decentralized training on consumer-grade GPUs.
 
 ## Why Unsloth?
 

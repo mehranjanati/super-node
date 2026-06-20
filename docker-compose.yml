@@ -222,6 +222,7 @@ services:
       - NEXUS_SERVER_PORT=3000
       - NEXUS_OPENAI_API_KEY=${OPENAI_API_KEY} # Load from host env
       - TEMPORAL_HOST_PORT=temporal:7233
+      - NEXUS_TIDB_DSN=root:@tcp(tidb:4000)/nexus?charset=utf8mb4&parseTime=True&loc=Local
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/run/docker.sock:/run/podman/podman.sock
@@ -245,4 +246,14 @@ services:
     build: ./rivet-service
     ports:
       - "50051:50051"
+    restart: unless-stopped
+
+  # Service 15: BFF (Backend For Frontend)
+  bff:
+    container_name: podman-bff-1
+    build: ./BFF
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./BFF/.env
     restart: unless-stopped

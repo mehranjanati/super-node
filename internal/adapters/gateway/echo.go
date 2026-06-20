@@ -74,7 +74,17 @@ func (g *EchoGateway) RegisterWebSocketRoutes(wsHandler *WebSocketHandler) {
 // Start starts the gateway.
 func (g *EchoGateway) Start(ctx context.Context) error {
 	g.echo.GET("/health", func(c echo.Context) error {
-		return c.String(http.StatusOK, "OK")
+		return c.JSON(http.StatusOK, map[string]string{
+			"status":  "ok",
+			"service": "go-gateway",
+		})
+	})
+
+	g.echo.GET("/internal/health", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{
+			"status":  "ok",
+			"service": "go-gateway",
+		})
 	})
 
 	g.setupAuthRoutes()
@@ -89,9 +99,47 @@ func (g *EchoGateway) Start(ctx context.Context) error {
 	g.setupAgentRoutes()
 	g.setupWorkflowRoutes()
 	g.setupBuilderRoutes()
+	g.setupInternalToolsRoutes()
 
 	// Use 3000 as default load balancer/gateway port
 	return g.echo.Start(":3000")
+}
+
+func (g *EchoGateway) setupInternalToolsRoutes() {
+	internal := g.echo.Group("/internal/tools")
+
+	internal.POST("/deploy", func(c echo.Context) error {
+		var body struct {
+			ProjectName string `json:"project_name"`
+			Template    string `json:"template"`
+		}
+
+		if err := c.Bind(&body); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error":   "invalid_payload",
+				"message": err.Error(),
+			})
+		}
+
+		if body.ProjectName == "" || body.Template == "" {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error":   "missing_fields",
+				"message": "project_name and template are required",
+			})
+		}
+
+		// TODO: In the future, this will trigger a Temporal workflow
+		// For now, we just mock a successful deployment response
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"status": "success",
+			"data": map[string]string{
+				"project_name": body.ProjectName,
+				"template":     body.Template,
+				"url":          fmt.Sprintf("https://%s.nexus.local", body.ProjectName),
+				"message":      "Deployment triggered successfully",
+			},
+		})
+	})
 }
 
 // In-memory store for workflows (for demonstration purposes)

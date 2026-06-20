@@ -5,3 +5,5 @@ dist/
 tmp/
 *.log
 .env
+nexus-super-node
+bin/

@@ -139,8 +139,54 @@ This allows agents to exist in Element, Beeper, or any Matrix client.
 
 ---
 
-## 9. Testing & Debugging
-Before deploying to the mainnet, you should verify your agent locally.
+## 8. Multi-Agent Orchestration (Supervisor & Sub-Agents)
+
+As tasks become more complex, a single agent is no longer sufficient. Nexus uses **VoltAgent** as the core framework to implement hierarchical multi-agent systems.
+
+Instead of one monolithic agent, we use a **Supervisor Agent** that delegates tasks to specialized **Sub-Agents** (e.g., a Database Architect Agent, a UI Designer Agent).
+
+For a detailed guide on how to implement this pattern using VoltAgent, see:
+👉 **[Sub-Agents and Supervisors Guide](./sub_agents_and_supervisors.md)**
+
+---
+
+## 9. Memory & RAG
+
+Agents need memory to maintain context and RAG (Retrieval-Augmented Generation) to access large knowledge bases. Nexus uses a three-tier memory architecture (Redis for short-term, TiDB for long-term, and TiDB Vector for semantic search).
+
+For a detailed guide on how to configure Memory adapters and build Retriever Agents, see:
+👉 **[Memory and RAG Guide](./memory_and_rag.md)**
+
+---
+
+## 10. Tools & MCP Registry
+
+Agents require tools to interact with the outside world (APIs, Databases, Filesystems). Nexus provides a robust, type-safe way to define local tools using `Zod` or connect to external **MCP Servers**.
+
+For a complete guide on how to build, validate, and connect tools to your agents, see:
+👉 **[Building MCP Tools Guide](./building_mcp_tools.md)**
+
+---
+
+## 11. Evals & Guardrails
+
+To prevent hallucinations and ensure safe autonomous execution, Nexus employs runtime Guardrails (via Zod and Hooks) and pre-deployment Evals.
+
+For a detailed guide on how to structure outputs safely and write automated tests for your agents, see:
+👉 **[Evals and Guardrails Guide](./evals_and_guardrails.md)**
+
+---
+
+## 12. Observability & Debugging
+
+Understanding why an agent made a specific decision is crucial. Nexus uses **VoltOps** and **OpenTelemetry** to trace every LLM call, tool execution, and context modification.
+
+For a complete guide on how to set up tracing, track costs, and debug agent workflows, see:
+👉 **[Observability and Tracing Guide](./observability_and_tracing.md)**
+
+---
+
+## 13. Testing Locally
 
 ### Local Simulation
 Use the `nexus-cli` to mock inputs and run the Wasm.
