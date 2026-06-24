@@ -313,6 +313,15 @@ func (r *tidbRepository) CreateAppData(ctx context.Context, id string, data []by
 	return err
 }
 
+func (r *tidbRepository) UpsertAppData(ctx context.Context, id string, data []byte) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO app_data (id, data) VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE data = VALUES(data)`,
+		id, data,
+	)
+	return err
+}
+
 // --- SocialRepository Implementation ---
 
 func (r *tidbRepository) SavePost(ctx context.Context, post *domain.Post) error {

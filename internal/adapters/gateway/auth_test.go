@@ -21,7 +21,7 @@ import (
 )
 
 func TestAuthNonce(t *testing.T) {
-	gateway := NewEchoGateway(nil, nil, nil)
+	gateway := NewEchoGateway(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	gateway.setupAuthRoutes()
 	e := gateway.echo
 
@@ -38,7 +38,7 @@ func TestAuthVerify(t *testing.T) {
 	t.Skip("Skipping failing test due to SIWE nonce issues")
 	// Create a mock user repository and a new gateway
 	mockUserRepo := &MockUserRepository{}
-	gateway := NewEchoGateway(mockUserRepo, nil, nil)
+	gateway := NewEchoGateway(mockUserRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	gateway.setupAuthRoutes()
 	e := gateway.echo
 

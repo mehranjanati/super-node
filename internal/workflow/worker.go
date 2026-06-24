@@ -40,6 +40,7 @@ func RegisterWorker(lc fx.Lifecycle, c client.Client, mcpSvc *mcp.MCPService, ml
 
 	// Register Dynamic Pipeline Workflow
 	w.RegisterWorkflow(DynamicPipelineWorkflow)
+	w.RegisterWorkflow(DummyDeploymentWorkflow)
 
 	// Register Dynamic Activities (which wrap the legacy ones)
 	dynamicActivities := &DynamicActivities{

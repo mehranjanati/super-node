@@ -10,20 +10,30 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Redpanda RedpandaConfig `mapstructure:"redpanda"`
-	Hasura   HasuraConfig   `mapstructure:"hasura"`
-	Agents   AgentsConfig   `mapstructure:"agents"`
-	Postgres PostgresConfig `mapstructure:"postgres"`
-	Rivet    RivetConfig    `mapstructure:"rivet"`
-	OpenClaw OpenClawConfig `mapstructure:"openclaw"`
-	OpenAI   OpenAIConfig   `mapstructure:"openai"`
-	Benthos  BenthosConfig  `mapstructure:"benthos"`
-	MCP      MCPConfig      `mapstructure:"mcp"`
-	Matrix   MatrixConfig   `mapstructure:"matrix"`
-	LiveKit  LiveKitConfig  `mapstructure:"livekit"`
-	TiDB     TiDBConfig     `mapstructure:"tidb"`
-	Role     string         `mapstructure:"role"` // monolith, api, worker, consumer
+	Server    ServerConfig    `mapstructure:"server"`
+	Redpanda  RedpandaConfig  `mapstructure:"redpanda"`
+	Hasura    HasuraConfig    `mapstructure:"hasura"`
+	Agents    AgentsConfig    `mapstructure:"agents"`
+	Postgres  PostgresConfig  `mapstructure:"postgres"`
+	Rivet     RivetConfig     `mapstructure:"rivet"`
+	OpenClaw  OpenClawConfig  `mapstructure:"openclaw"`
+	OpenAI    OpenAIConfig    `mapstructure:"openai"`
+	Benthos   BenthosConfig   `mapstructure:"benthos"`
+	MCP       MCPConfig       `mapstructure:"mcp"`
+	Matrix    MatrixConfig    `mapstructure:"matrix"`
+	LiveKit   LiveKitConfig   `mapstructure:"livekit"`
+	TiDB      TiDBConfig      `mapstructure:"tidb"`
+	VoltAgent VoltAgentConfig `mapstructure:"voltagent"`
+	Role      string          `mapstructure:"role"` // monolith, api, worker, consumer
+}
+
+type VoltAgentConfig struct {
+	BaseURL             string `mapstructure:"base_url"`
+	Timeout             string `mapstructure:"timeout"`
+	Enabled             bool   `mapstructure:"enabled"`
+	UseEmbeddedFallback bool   `mapstructure:"use_embedded_fallback"`
+	HealthCheckPath     string `mapstructure:"health_check_path"`
+	ContractVersion     string `mapstructure:"contract_version"`
 }
 
 type TiDBConfig struct {
@@ -113,6 +123,12 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("postgres.url", "postgres://postgres:password@localhost:5432/chatwoot_dev?sslmode=disable")
 	viper.SetDefault("rivet.service_url", "localhost:50051")
 	viper.SetDefault("benthos.api_url", "http://wasm-processor:4195")
+	viper.SetDefault("voltagent.base_url", "http://voltagent-service:3141")
+	viper.SetDefault("voltagent.timeout", "5s")
+	viper.SetDefault("voltagent.enabled", false)
+	viper.SetDefault("voltagent.use_embedded_fallback", true)
+	viper.SetDefault("voltagent.health_check_path", "/health")
+	viper.SetDefault("voltagent.contract_version", "v1alpha1")
 	viper.SetDefault("role", "monolith")
 
 	defaultMCPServers := []map[string]interface{}{

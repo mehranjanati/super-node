@@ -1,90 +1,265 @@
 # برنامه توسعه فازبندی شده (MVP Development Plan)
 
-این سند یک برنامه گام‌به‌گام و چابک برای پیاده‌سازی معماری نهایی سیستم (Nexus Super Node) است. هدف این برنامه جلوگیری از پیچیدگی بیش از حد در مراحل اولیه، حفظ سرعت توسعه، و اطمینان از همگام بودن توسعه در لایه‌های فرانت‌اند و بک‌اند است.
+این سند مرجع محصول برای MVP است، اما باید با تسک‌های روزانه داخل `docs/Daily task/` هم‌راستا بماند. هدف این نسخه این است که بین «پیشروی سریع معماری» و «دیدن تدریجی نتیجه در فرانت و تست‌پذیری» تعادل ایجاد کند؛ یعنی هر گام کوچک، هم خروجی قابل مشاهده داشته باشد، هم validation روشن، هم docs قابل اتکا.
 
 ---
 
-## 🎯 اهداف نسخه MVP (Minimum Viable Product)
-نسخه MVP فقط باید شامل موارد زیر باشد:
-1. ارتباط پایدار فرانت‌اند (Svelte) با لایه BFF (Bun) و چت با هوش مصنوعی.
-2. اجرای ابزارهای پایه (Tools) توسط هسته Go (مثلاً یک دستور ساده مثل ثبت داده).
-3. جریان منطقی اولیه با Temporal و Rivet Service.
-4. دسترسی لحظه‌ای به داده‌ها از طریق Hasura و Postgres/TiDB.
+## هدف MVP
 
-*موارد زیر در فازهای بعدی اضافه می‌شوند و در MVP **نیستند**:*
-- تماس‌های صوتی/تصویری LiveKit (فقط زیرساخت آن آماده می‌شود).
-- شبکه‌های غیرمتمرکز پیچیده با Matrix و OpenClaw (فقط ساختار پایه مستقر می‌شود).
-- کلاسترهای سنگین Wasm.
-- **توجه استراتژیک:** به جای تولید کد (Code Generation) از صفر برای سایت‌های پیچیده، سیستم از استراتژی **Template-Driven** (مثلاً استقرار قالب‌های `svelte-commerce` و `sveltia-cms`) استفاده خواهد کرد تا MVP سریع‌تر تحویل داده شود (رجوع کنید به [ECOMMERCE_CMS_STRATEGY.md](./ECOMMERCE_CMS_STRATEGY.md)).
+نسخه MVP باید فقط این هسته را به‌صورت پایدار و قابل تکرار تحویل بدهد:
 
----
+1. یک مسیر اصلی کارا و قابل مشاهده از `SPA/BFF -> Go -> voltagent-service -> Go -> Temporal`
+2. امکان اجرای حداقل یک use case واقعی مثل `deploy_website`
+3. امکان دیدن اثر اجرا در یک مصرف‌کننده واقعی مثل chat، builder، workflows یا logs
+4. امکان تست دستی و تست هدفمند برای همین مسیر اصلی
+5. حداقل visibility برای health، error و fallback
 
-## 🚀 فاز ۱: زیرساخت پایه و ارتباطات اولیه (هفته ۱)
-**هدف:** راه‌اندازی دیتابیس‌ها، استقرار سرورهای پایه، و اطمینان از اتصال Svelte به Bun.
+موارد زیر در این MVP جزو اولویت اول نیستند:
 
-* **بک‌اند (Infrastructure & Go):**
-  - [ ] راه‌اندازی `docker-compose.yml` فقط برای سرویس‌های پایه: `Postgres`، `TiDB`، `Redis`، `Hasura`.
-  - [ ] بالا آوردن سرور `Bun` (لایه BFF) با یک API ساده `/api/health`.
-  - [ ] ساخت اسکلت اولیه `Go Server` (فقط روت‌های پایه و اتصال به دیتابیس).
-  - [ ] پیکربندی `Hasura` برای اتصال به `Postgres` و اکسپوز کردن یک جدول ساده (مثلاً `users` یا `agents`).
+- تماس‌های صوتی/تصویری LiveKit
+- شبکه‌های چندکاناله کامل با Matrix و OpenClaw
+- کلاسترهای سنگین Wasm
+- داشبوردهای بسیار کامل و production-grade قبل از تثبیت مسیر اصلی
+- code generation از صفر برای سایت‌های پیچیده
 
-* **فرانت‌اند (SvelteKit):**
-  - [ ] ایجاد پروژه SvelteKit.
-  - [ ] راه‌اندازی TailwindCSS و کامپوننت‌های پایه (Shadcn/Bits UI).
-  - [ ] ساخت یک صفحه چت ساده.
-  - [ ] **اتصال:** ارسال درخواست از Svelte به API سلامت Bun و خواندن داده از Hasura با GraphQL.
+توجه استراتژیک:
+
+- رویکرد اصلی همچنان **Template-Driven** است، نه تولید کد پیچیده از صفر
+- day fileها مرجع اجرای migration هستند و این سند باید فقط جهت‌گیری محصول و ترتیب sliceها را روشن کند
 
 ---
 
-## 🧠 فاز ۲: هوش مصنوعی و اجرای منطق (هفته ۲)
-**هدف:** چت با هوش مصنوعی، استریم داده‌ها، و فراخوانی ابزارها از طریق بک‌اند Go.
+## تعادل بین MVP و Daily Task
 
-* **بک‌اند (Bun & Go & Temporal):**
-  - [ ] **Bun:** یکپارچه‌سازی Vercel AI SDK در Bun. اتصال به OpenAI/Anthropic.
-  - [ ] **Bun & Redis:** پیاده‌سازی Rate Limiting ساده.
-  - [ ] **Go & Temporal:** راه‌اندازی `Temporal` در داکر. ساخت یک Workflow ساده در Go (مثلاً `DummyTaskWorkflow`).
-  - [ ] **Rivet Service:** راه‌اندازی سرویس Rivet و اتصال آن به Go Server از طریق gRPC برای اجرای یک گراف ساده.
-  - [ ] **Template Registry:** ایجاد زیرساخت پایه برای کپی و تنظیم قالب‌های آماده (مانند Svelte Commerce).
-  - [ ] **اتصال:** Bun پس از تشخیص نیاز به اجرای ابزار (Tool Calling)، یک درخواست HTTP/gRPC به Go Server می‌زند. Go Server نیز Workflow مربوطه (مثلا استقرار یک قالب) را در Temporal اجرا می‌کند.
+برای جلوگیری از drift بین برنامه MVP و کارهای روزانه، این قانون‌ها باید رعایت شوند:
 
-* **فرانت‌اند (SvelteKit):**
-  - [ ] استفاده از هوک `useChat` در Svelte برای دریافت پاسخ‌های استریم شده از Bun.
-  - [ ] نمایش وضعیت‌های لودینگ (مثلاً "در حال اجرای ابزار...") وقتی Bun در حال ارتباط با Go است.
+1. `docs/MVP_DEVELOPMENT_PLAN.md` مرجع اولویت محصول و ترتیب sliceها است.
+2. فایل‌های داخل `docs/Daily task/` مرجع اجرای روزبه‌روز migration و carry-over هستند.
+3. هر slice جدید فقط وقتی ارزش دارد که:
+   - با `curl` یا تست دستی قابل تایید باشد
+   - از یک لایه مصرف‌کننده مثل SPA یا BFF قابل مشاهده باشد
+   - اگر ریسک regression دارد، یک test هدفمند هم برایش اضافه شود
+4. قبل از کامل‌شدن زنجیره اصلی، وارد featureهای سنگین‌تر مثل LiveKit، Matrix، Redpanda UI و polishهای کم‌ارزش نمی‌شویم.
+5. هر تغییری که فقط backend را بهتر کند ولی از سمت مصرف‌کننده قابل دیدن نباشد، باید هم‌زمان یک surface مشاهده یا plan تست روشن هم داشته باشد.
 
 ---
 
-## ⚡ فاز ۳: جریان رویدادها و عامل‌های استدلال‌گر (هفته ۳)
-**هدف:** اضافه کردن Redpanda برای رویدادها و فعال کردن VoltAgent برای تصمیم‌گیری.
+## تعریف Done برای هر Slice
 
-* **بک‌اند (Redpanda & VoltAgent):**
-  - [ ] راه‌اندازی `Redpanda` در داکر به عنوان جایگزین Kafka.
-  - [ ] پیکربندی Go Server برای تولید (Produce) و مصرف (Consume) رویدادها از Redpanda (مثلاً رویداد `user_created`).
-  - [ ] فعال‌سازی `VoltAgent` در لایه Go تا بتواند رویدادهای Redpanda را بخواند و بر اساس آن‌ها ورک‌فلوهای Temporal را تریگر کند.
-  - [ ] **Redpanda Connect:** راه‌اندازی خط‌لوله‌های ساده برای انتقال لاگ‌ها.
+هر slice MVP وقتی done محسوب می‌شود که این موارد سبز باشند:
 
-* **فرانت‌اند (SvelteKit):**
-  - [ ] ساخت داشبورد برای نمایش رویدادهای زنده.
-  - [ ] **اتصال:** از طریق Hasura Subscriptions، فرانت‌اند به تغییرات دیتابیس (که نتیجه پردازش‌های VoltAgent است) به صورت Real-time گوش می‌دهد.
+- کد مربوطه `build/check` یا حداقل compile pass داشته باشد
+- مسیر جدید با `curl` یا تست دستی قابل تکرار باشد
+- نتیجه از یک consumer واقعی مثل SPA، BFF chat، workflows یا logs دیده شود
+- خطا، timeout یا fallback رفتار صریح و قابل تشخیص داشته باشد
+- docs همان روز و در صورت نیاز این فایل MVP به‌روز شده باشند
 
----
+وقتی ارزش افزوده واضح دارد، test خودکار هم اضافه می‌شود:
 
-## 🌐 فاز ۴: درگاه‌های ارتباطی و چندکاناله (هفته ۴)
-**هدف:** آماده‌سازی معماری برای کلاینت‌های خارجی (Matrix/OpenClaw) و زیرساخت RTC.
-
-* **بک‌اند (LiveKit, Matrix, OpenClaw):**
-  - [ ] استقرار `LiveKit` در داکر و ساخت API در Go Server برای تولید توکن دسترسی (Room Token).
-  - [ ] استقرار `Matrix Conduit` و `OpenClaw` در داکر.
-  - [ ] تنظیم OpenClaw برای هدایت پیام‌های خارجی به Matrix و سپس به Redpanda.
-
-* **فرانت‌اند (SvelteKit):**
-  - [ ] پیاده‌سازی کامپوننت تماس ویدیویی/صوتی با استفاده از SDK کلاینت LiveKit.
-  - [ ] **اتصال:** فرانت‌اند توکن را از Go Server می‌گیرد و مستقیماً به سرور LiveKit متصل می‌شود.
+- unit test برای contract یا mapping
+- integration test برای endpoint اصلی
+- e2e یا smoke test فقط برای مسیرهای حیاتی و کم‌نویز
 
 ---
 
-## 📝 خلاصه استراتژی ادغام (Integration Strategy)
+## وضعیت فعلی نسبت به MVP
+
+با توجه به repo فعلی و day fileهای migration، پروژه الان در میانه MVP قرار دارد:
+
+- foundation اولیه فرانت، BFF و Go وجود دارد
+- مسیر `deploy_website` تا حد خوبی به routeهای جدید align شده است
+- `portal1` در لایه service برای manifest و execute و deploy به contract داخلی `/internal/tools/*` نزدیک شده است
+- workflow/log surface در فرانت وجود دارد، اما همه صفحه‌ها هنوز به backend واقعی وصل نیستند
+- health، observability و validation هنوز نیاز به تکمیل هدفمند دارند
+
+نتیجه عملی:
+
+- تمرکز فعلی باید روی کامل‌کردن مسیر اصلی و قابل‌دیدن‌کردن آن در SPA باشد
+- نه روی بازکردن featureهای جدید خارج از MVP
+
+---
+
+## فاز ۱: Foundation و Visibility پایه
+
+هدف:
+
+- تثبیت health contract
+- آماده‌کردن پایه‌ای که از همان ابتدا در فرانت یا BFF قابل مشاهده باشد
+
+کارها:
+
+- بالا آوردن `BFF` با `GET /api/health`
+- بالا آوردن `Go` با `GET /internal/health`
+- یکسان‌سازی envelopeهای ساده برای health و error
+- تثبیت پروژه `SvelteKit` و کامپوننت‌های پایه
+- داشتن حداقل یک screen یا status card که سلامت سرویس‌ها را نشان بدهد
+
+خروجی قابل مشاهده:
+
+- health endpointها با پاسخ JSON ساخت‌یافته
+- امکان دیدن وضعیت سلامت از طریق فرانت یا حداقل از یک صفحه/پنل debug
+
+validation:
+
+```bash
+curl http://localhost:3001/api/health
+curl http://localhost:3000/internal/health
+```
+
+هم‌راستایی با day fileها:
+
+- `docs/Daily task/DEVELOP_ROOZANEH.md`
+- `docs/Daily task/VOLTAGENT_SERVICE_DAY4_HEALTH_AND_OBSERVABILITY.md`
+
+---
+
+## فاز ۲: Contract داخلی و First Real Slice
+
+هدف:
+
+- بستن اولین vertical slice واقعی برای `deploy_website`
+- حذف ambiguity بین callerهای edge و backend
+
+کارها:
+
+- تثبیت contract برای `POST /internal/tools/deploy`
+- شفاف‌کردن contractهای `GET /internal/tools/manifest` و `POST /internal/tools/execute`
+- هم‌راستا کردن `BFF` و `portal1` با routeهای جدید
+- نگه‌داشتن routeهای legacy فقط برای compatibility backend
+- ثبت `workflow_id`, `planning_source`, `current_step` و خطاهای اصلی
+
+خروجی قابل مشاهده:
+
+- امکان trigger کردن deploy از یک consumer واقعی
+- دیده‌شدن workflow یا log یا status در فرانت
+- قابل مشاهده بودن failureهای request یا timeout
+
+validation:
+
+```bash
+curl -X POST http://localhost:3000/internal/tools/deploy \
+  -H 'Content-Type: application/json' \
+  -d '{"project_name":"demo-site","template":"svelte"}'
+```
+
+تست‌های ارزشمند این فاز:
+
+- unit test برای serviceهای فرانت که route درست را صدا می‌زنند
+- test هدفمند برای gateway یا contract mapping
+- تست دستی از UI برای اطمینان از visible بودن نتیجه
+
+هم‌راستایی با day fileها:
+
+- `docs/Daily task/VOLTAGENT_SERVICE_DAY2_BACKEND_RUNTIME.md`
+- `docs/Daily task/VOLTAGENT_SERVICE_DAY3_BFF_PORTAL_ALIGNMENT.md`
+
+---
+
+## فاز ۳: Workflow، Read Model و Surface قابل مشاهده
+
+هدف:
+
+- تبدیل execution ساده به جریان قابل پیگیری
+- نشان‌دادن status و log در یک surface واقعی در SPA
+
+کارها:
+
+- trigger شدن workflow از Go به Temporal
+- persist شدن execution record و status
+- فراهم‌شدن read model برای workflowها و logها
+- وصل شدن صفحه‌هایی مثل `Workflows` و `Logs` به داده واقعی
+- اگر builder صفحه فعال محصول است، mount شدن route آن در SPA فعال
+
+خروجی قابل مشاهده:
+
+- ایجاد workflow بعد از `deploy_website`
+- دیده‌شدن execution در `#/workflows` یا surface مشابه
+- دیده‌شدن logها یا status به‌صورت قابل فهم برای توسعه‌دهنده
+
+validation:
+
+- trigger از chat یا builder یا endpoint مستقیم
+- مشاهده workflow در UI
+- بررسی log/status از endpoint یا consumer
+
+تست‌های ارزشمند این فاز:
+
+- test برای persistence/read model
+- test برای mapping workflow status
+- smoke test سبک برای use case رسمی phase 1
+
+هم‌راستایی با day fileها:
+
+- `docs/Daily task/DEVELOP_ROOZANEH.md`
+- `docs/Daily task/VOLTAGENT_SERVICE_DAY6_TESTS_AND_VALIDATION.md`
+
+---
+
+## فاز ۴: Observability، Hardening و Validation تکرارپذیر
+
+هدف:
+
+- بالا بردن confidence مسیر اصلی بدون باز کردن scopeهای جدید
+
+کارها:
+
+- health تجمیعی `Go -> voltagent-service`
+- latency و error classification
+- logهای روشن برای `remote_voltagent` و `embedded_fallback`
+- env matrix و readiness
+- smoke test برای stack
+- validation رسمی مسیر `deploy_website` در حالت remote و fallback
+
+خروجی قابل مشاهده:
+
+- health معنادارتر در endpoint و پنل‌های فرانت
+- امکان تشخیص واضح failure mode
+- confidence بیشتر برای ادامه توسعه UI و اضافه‌کردن تست‌ها
+
+تست‌های ارزشمند این فاز:
+
+- unit test برای `voltagentclient`
+- integration test برای `POST /plan`
+- smoke test برای compose
+- end-to-end validation برای `deploy_website`
+
+هم‌راستایی با day fileها:
+
+- `docs/Daily task/VOLTAGENT_SERVICE_DAY4_HEALTH_AND_OBSERVABILITY.md`
+- `docs/Daily task/VOLTAGENT_SERVICE_DAY5_INFRA_HARDENING.md`
+- `docs/Daily task/VOLTAGENT_SERVICE_DAY6_TESTS_AND_VALIDATION.md`
+
+---
+
+## فازهای بعد از MVP
+
+فقط بعد از سبز شدن مسیر اصلی و validation آن وارد این بخش‌ها می‌شویم:
+
+- Redpanda event flows کامل و dashboardهای real-time پیشرفته
+- agent orchestrationهای چندمرحله‌ای فراتر از use case اصلی
+- LiveKit، Matrix و OpenClaw به‌عنوان featureهای قابل عرضه
+- polish کامل فرانت، coverage گسترده و release hardening پیشرفته
+
+---
+
+## استراتژی ادغام
+
 برای جلوگیری از سردرگمی، قانون زیر باید رعایت شود:
-1. **فرانت‌اند هرگز با Go Server مستقیم حرف نمی‌زند** (مگر برای دریافت توکن‌های خاص مثل LiveKit).
-2. **تمام کوئری‌های خواندن (Read) فقط از طریق Hasura انجام می‌شود.**
-3. **تمام عملیات نوشتن و چت (Write/Chat) از طریق Bun (BFF) عبور می‌کند.**
-4. **Go Server فقط با پیام‌های ساخت‌یافته (از سمت Bun یا Redpanda) کار می‌کند** و وظیفه‌اش اجرای منطق در Temporal یا Rivet است.
+
+1. هدف نهایی محصول این است که عملیات write/chat از لایه edge از طریق `BFF` عبور کند.
+2. در فاز migration فعلی، استفاده صریح `portal1` از contract داخلی `/internal/tools/*` قابل قبول است، چون هدفش حذف وابستگی به routeهای legacy و کم‌کردن drift است.
+3. تمام readهای پایدار و محصولی ترجیحاً از طریق Hasura یا read modelهای مشخص انجام می‌شوند، نه از endpointهای موقت و ad-hoc.
+4. `Go` فقط با پیام‌های ساخت‌یافته و contract-aware کار می‌کند و وظیفه‌اش اجرای منطق، workflow و orchestration است.
+5. هر مسیر موقت که برای migration نگه داشته می‌شود باید explicit در day fileها ثبت شود و plan حذف داشته باشد.
+
+---
+
+## قاعده اولویت از این نقطه به بعد
+
+اگر بین چند کار مردد بودیم، اولویت با این ترتیب است:
+
+1. چیزی که زنجیره اصلی `SPA/BFF -> Go -> voltagent-service -> Go -> Temporal` را کامل‌تر می‌کند
+2. چیزی که نتیجه را زودتر در فرانت یا consumer قابل مشاهده می‌کند
+3. چیزی که confidence را با test یا smoke validation بالا می‌برد
+4. چیزی که observability و failure mode را روشن‌تر می‌کند
+5. featureهای جدید خارج از مسیر اصلی

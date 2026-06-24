@@ -207,6 +207,28 @@ services:
       - temporal
     restart: unless-stopped
 
+  # Service 8c: VoltAgent Planning Service
+  voltagent-service:
+    build: ./voltagent-service
+    ports:
+      - "3141:3141"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - LOG_LEVEL=${VOLTAGENT_LOG_LEVEL:-info}
+      - PORT=${VOLTAGENT_PORT:-3141}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3141/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   # Service 9: Nexus Super Node (Go Service)
   nexus-super-node:
     container_name: podman-nexus-super-node-1
@@ -220,7 +242,7 @@ services:
       - NEXUS_POSTGRES_URL=postgres://postgres:password@postgres:5432/chatwoot_dev?sslmode=disable
       - NEXUS_HASURA_URL=http://hasura:8080/v1/graphql
       - NEXUS_SERVER_PORT=3000
-      - NEXUS_OPENAI_API_KEY=${OPENAI_API_KEY} # Load from host env
+      - NEXUS_OPENAI_API_KEY=${OPENAI_API_KEY:-} # Load from local .env or host env
       - TEMPORAL_HOST_PORT=temporal:7233
       - NEXUS_TIDB_DSN=root:@tcp(tidb:4000)/nexus?charset=utf8mb4&parseTime=True&loc=Local
     volumes:
@@ -237,6 +259,8 @@ services:
         condition: service_started
       temporal:
         condition: service_started
+      voltagent-service:
+        condition: service_healthy
     restart: unless-stopped
 
   # Service 10: Rivet Service

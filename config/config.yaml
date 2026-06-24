@@ -8,9 +8,11 @@ redpanda:
 
 voltagent:
   enabled: true
-  model: "gpt-4-turbo" # Default model for reasoning
-  system_prompt_path: "./config/prompts/system.md"
-  enable_memory: false # Set to true when VectorDB is ready
+  base_url: "http://localhost:3141"
+  timeout: "5s"
+  use_embedded_fallback: true
+  health_check_path: "/health"
+  contract_version: "v1alpha1"
 
 agents:
   concurrency: 50 # High concurrency setting

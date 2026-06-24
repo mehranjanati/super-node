@@ -20,6 +20,7 @@ type UserRepository interface {
 type AppDataRepository interface {
 	GetAppData(ctx context.Context, id string) (*domain.AppData, error)
 	CreateAppData(ctx context.Context, id string, data []byte) error
+	UpsertAppData(ctx context.Context, id string, data []byte) error
 }
 
 // Database is the port for interacting with the database.

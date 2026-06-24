@@ -2,6 +2,8 @@ package voltagent
 
 import (
 	"nexus-super-node-v3/internal/adapters/ai"
+	"nexus-super-node-v3/internal/adapters/voltagentclient"
+	"nexus-super-node-v3/internal/config"
 	"nexus-super-node-v3/internal/core/services/mcp"
 
 	"go.temporal.io/sdk/client"
@@ -20,17 +22,35 @@ type VoltAgentTool struct {
 	Parameters  interface{} `json:"parameters"` // JSON Schema
 }
 
+type RequestMetadata struct {
+	RequestID     string
+	CorrelationID string
+	Source        string
+}
+
+type WebsiteDeploymentInput struct {
+	ProjectName string
+	Prompt      string
+	Template    string
+	Theme       string
+	Framework   string
+}
+
 // VoltAgentService handles communication with the VoltAgent reasoning engine
 type VoltAgentService struct {
 	mcpSvc         *mcp.MCPService
 	temporalClient client.Client
 	aiClient       *ai.OpenAIClient
+	cfg            *config.Config
+	remoteClient   *voltagentclient.Client
 }
 
-func NewVoltAgentService(mcpSvc *mcp.MCPService, temporalClient client.Client, aiClient *ai.OpenAIClient) *VoltAgentService {
+func NewVoltAgentService(cfg *config.Config, mcpSvc *mcp.MCPService, temporalClient client.Client, aiClient *ai.OpenAIClient, remoteClient *voltagentclient.Client) *VoltAgentService {
 	return &VoltAgentService{
 		mcpSvc:         mcpSvc,
 		temporalClient: temporalClient,
 		aiClient:       aiClient,
+		cfg:            cfg,
+		remoteClient:   remoteClient,
 	}
 }

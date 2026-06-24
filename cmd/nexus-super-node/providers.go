@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"nexus-super-node-v3/internal/adapters/ai"
 	"nexus-super-node-v3/internal/adapters/gateway"
@@ -9,6 +10,7 @@ import (
 	"nexus-super-node-v3/internal/adapters/persistence/tidb"
 	"nexus-super-node-v3/internal/adapters/redpanda"
 	rivetAdapter "nexus-super-node-v3/internal/adapters/rivet" // Import Gateway
+	"nexus-super-node-v3/internal/adapters/voltagentclient"
 	"nexus-super-node-v3/internal/config"
 	"nexus-super-node-v3/internal/core/services"
 	"nexus-super-node-v3/internal/core/services/chat"
@@ -63,6 +65,15 @@ func newOpenAIClient(cfg *config.Config) *ai.OpenAIClient {
 
 func newOpenClawClient(cfg *config.Config) *openclaw.Client {
 	return openclaw.NewClient(cfg.OpenClaw.GatewayURL, cfg.OpenClaw.AuthSecret)
+}
+
+func newVoltAgentClient(cfg *config.Config) (*voltagentclient.Client, error) {
+	timeout, err := time.ParseDuration(cfg.VoltAgent.Timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	return voltagentclient.NewClient(cfg.VoltAgent.BaseURL, timeout), nil
 }
 
 func newChatService(cfg *config.Config, claw *openclaw.Client) ports.ChatService {

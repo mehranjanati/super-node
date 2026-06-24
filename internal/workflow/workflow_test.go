@@ -108,3 +108,29 @@ func (s *UnitTestSuite) TestDynamicPipelineWorkflow_CryptoAnalysis() {
 	tradeRes, _ := result["trade_result"].(string)
 	s.Contains(tradeRes, "Successfully swapped")
 }
+
+func (s *UnitTestSuite) TestDummyDeploymentWorkflow() {
+	env := s.NewTestWorkflowEnvironment()
+
+	input := DummyDeploymentInput{
+		ProjectName: "status-demo",
+		Template:    "svelte",
+	}
+
+	env.ExecuteWorkflow(DummyDeploymentWorkflow, input)
+
+	s.True(env.IsWorkflowCompleted())
+	s.NoError(env.GetWorkflowError())
+
+	var result DummyDeploymentStatus
+	env.GetWorkflowResult(&result)
+
+	s.Equal("COMPLETED", result.Status)
+	s.Equal("DONE", result.CurrentStep)
+	s.NotNil(result.Artifacts)
+	if result.Artifacts != nil {
+		s.Equal("status-demo", result.Artifacts.ProjectName)
+		s.Contains(result.Artifacts.URL, "status-demo")
+	}
+	s.Contains(result.Logs, "Deployment finished successfully.")
+}

@@ -3,12 +3,14 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"nexus-super-node-v3/internal/adapters/ai"
 	"nexus-super-node-v3/internal/adapters/openclaw"
+	"nexus-super-node-v3/internal/adapters/voltagentclient"
 	"nexus-super-node-v3/internal/core/domain"
 	"nexus-super-node-v3/internal/core/services/mcp"
 	"nexus-super-node-v3/internal/core/services/voltagent"
@@ -22,20 +24,21 @@ import (
 
 // EchoGateway is the gateway for the application using Echo framework.
 type EchoGateway struct {
-	echo       *echo.Echo
-	userRepo   ports.UserRepository
-	mcpSvc     *mcp.MCPService
-	voltSvc    *voltagent.VoltAgentService
-	chatSvc    ports.ChatService
-	socialSvc  ports.SocialService
-	financeSvc ports.FinanceService
-	agentSvc   ports.AgentService
-	redpanda   ports.EventProducer
-	claw       *openclaw.Client
+	echo        *echo.Echo
+	userRepo    ports.UserRepository
+	appDataRepo ports.AppDataRepository
+	mcpSvc      *mcp.MCPService
+	voltSvc     *voltagent.VoltAgentService
+	chatSvc     ports.ChatService
+	socialSvc   ports.SocialService
+	financeSvc  ports.FinanceService
+	agentSvc    ports.AgentService
+	redpanda    ports.EventProducer
+	claw        *openclaw.Client
 }
 
 // NewEchoGateway creates a new EchoGateway.
-func NewEchoGateway(userRepo ports.UserRepository, mcpSvc *mcp.MCPService, voltSvc *voltagent.VoltAgentService, chatSvc ports.ChatService, socialSvc ports.SocialService, financeSvc ports.FinanceService, agentSvc ports.AgentService, rp ports.EventProducer, claw *openclaw.Client) *EchoGateway {
+func NewEchoGateway(userRepo ports.UserRepository, appDataRepo ports.AppDataRepository, mcpSvc *mcp.MCPService, voltSvc *voltagent.VoltAgentService, chatSvc ports.ChatService, socialSvc ports.SocialService, financeSvc ports.FinanceService, agentSvc ports.AgentService, rp ports.EventProducer, claw *openclaw.Client) *EchoGateway {
 	e := echo.New()
 
 	// Middleware
@@ -53,16 +56,17 @@ func NewEchoGateway(userRepo ports.UserRepository, mcpSvc *mcp.MCPService, voltS
 	}))
 
 	return &EchoGateway{
-		echo:       e,
-		userRepo:   userRepo,
-		mcpSvc:     mcpSvc,
-		voltSvc:    voltSvc,
-		chatSvc:    chatSvc,
-		socialSvc:  socialSvc,
-		financeSvc: financeSvc,
-		agentSvc:   agentSvc,
-		redpanda:   rp,
-		claw:       claw,
+		echo:        e,
+		userRepo:    userRepo,
+		appDataRepo: appDataRepo,
+		mcpSvc:      mcpSvc,
+		voltSvc:     voltSvc,
+		chatSvc:     chatSvc,
+		socialSvc:   socialSvc,
+		financeSvc:  financeSvc,
+		agentSvc:    agentSvc,
+		redpanda:    rp,
+		claw:        claw,
 	}
 }
 
@@ -108,10 +112,70 @@ func (g *EchoGateway) Start(ctx context.Context) error {
 func (g *EchoGateway) setupInternalToolsRoutes() {
 	internal := g.echo.Group("/internal/tools")
 
+	internal.GET("/manifest", func(c echo.Context) error {
+		if g.voltSvc == nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{
+				"error":   "service_unavailable",
+				"message": "VoltAgent service is not configured",
+			})
+		}
+
+		manifest, err := g.voltSvc.GetManifest()
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, manifest)
+	})
+
+	internal.POST("/execute", func(c echo.Context) error {
+		var body struct {
+			ToolID string                 `json:"tool_id"`
+			Args   map[string]interface{} `json:"args"`
+		}
+		if err := c.Bind(&body); err != nil {
+			return c.String(http.StatusBadRequest, err.Error())
+		}
+
+		if g.voltSvc == nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{
+				"error":   "service_unavailable",
+				"message": "VoltAgent service is not configured",
+			})
+		}
+
+		result, err := g.voltSvc.ExecuteTool(c.Request().Context(), body.ToolID, body.Args, voltagent.RequestMetadata{
+			RequestID:     c.Request().Header.Get("X-Request-Id"),
+			CorrelationID: c.Request().Header.Get("X-Correlation-Id"),
+			Source:        "internal_tools_execute",
+		})
+		if err != nil {
+			return c.JSON(statusCodeForVoltAgentError(err), map[string]string{"error": err.Error()})
+		}
+
+		if record, ok := result.(map[string]string); ok {
+			if workflowID := record["workflow_id"]; workflowID != "" {
+				logs := []string{firstNonEmpty(record["message"], "Workflow started.")}
+				_ = g.persistWorkflowStart(
+					c.Request().Context(),
+					workflowID,
+					inferWorkflowKind(body.ToolID),
+					inferWorkflowName(body.ToolID, workflowID, body.Args),
+					firstNonEmpty(record["current_step"], "INIT"),
+					logs,
+					inferWorkflowArtifacts(body.ToolID, body.Args, record),
+				)
+			}
+		}
+		return c.JSON(http.StatusOK, result)
+	})
+
 	internal.POST("/deploy", func(c echo.Context) error {
 		var body struct {
 			ProjectName string `json:"project_name"`
 			Template    string `json:"template"`
+			Prompt      string `json:"prompt"`
+			Theme       string `json:"theme"`
+			Framework   string `json:"framework"`
 		}
 
 		if err := c.Bind(&body); err != nil {
@@ -121,24 +185,61 @@ func (g *EchoGateway) setupInternalToolsRoutes() {
 			})
 		}
 
-		if body.ProjectName == "" || body.Template == "" {
+		if body.ProjectName == "" || (body.Template == "" && body.Framework == "") {
 			return c.JSON(http.StatusBadRequest, map[string]string{
 				"error":   "missing_fields",
-				"message": "project_name and template are required",
+				"message": "project_name and either template or framework are required",
 			})
 		}
 
-		// TODO: In the future, this will trigger a Temporal workflow
-		// For now, we just mock a successful deployment response
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"status": "success",
-			"data": map[string]string{
-				"project_name": body.ProjectName,
-				"template":     body.Template,
-				"url":          fmt.Sprintf("https://%s.nexus.local", body.ProjectName),
-				"message":      "Deployment triggered successfully",
+		if g.voltSvc == nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{
+				"error":   "service_unavailable",
+				"message": "Temporal workflow service is not configured",
+			})
+		}
+
+		result, err := g.voltSvc.StartWebsiteDeployment(
+			c.Request().Context(),
+			voltagent.WebsiteDeploymentInput{
+				ProjectName: body.ProjectName,
+				Prompt:      body.Prompt,
+				Template:    body.Template,
+				Theme:       body.Theme,
+				Framework:   firstNonEmpty(body.Framework, body.Template),
 			},
-		})
+			voltagent.RequestMetadata{
+				RequestID:     c.Request().Header.Get("X-Request-Id"),
+				CorrelationID: c.Request().Header.Get("X-Correlation-Id"),
+				Source:        "internal_tools_deploy",
+			},
+		)
+		if err != nil {
+			return c.JSON(statusCodeForVoltAgentError(err), map[string]string{
+				"error":   "workflow_start_failed",
+				"message": err.Error(),
+			})
+		}
+
+		if workflowID, ok := result["workflow_id"].(string); ok {
+			logMessage, _ := result["message"].(string)
+			data, _ := result["data"].(map[string]string)
+			planningSource, _ := result["planning_source"].(string)
+			projectName := body.ProjectName
+			template := body.Template
+			if data != nil {
+				projectName = firstNonEmpty(data["project_name"], projectName)
+				template = firstNonEmpty(data["template"], template)
+			}
+			_ = g.persistWorkflowStart(c.Request().Context(), workflowID, "deployment", projectName, "INIT", []string{firstNonEmpty(logMessage, "Website deployment workflow started.")}, &domain.WorkflowExecutionArtifacts{
+				ProjectName:    projectName,
+				Template:       template,
+				PlanningSource: planningSource,
+				Message:        firstNonEmpty(logMessage, "Website deployment workflow started."),
+			})
+		}
+
+		return c.JSON(http.StatusOK, result)
 	})
 }
 
@@ -293,6 +394,13 @@ func (g *EchoGateway) setupVoltAgentRoutes() {
 
 	// Manifest for VoltAgent (Tools definition)
 	volt.GET("/manifest", func(c echo.Context) error {
+		if g.voltSvc == nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{
+				"error":   "service_unavailable",
+				"message": "VoltAgent service is not configured",
+			})
+		}
+
 		manifest, err := g.voltSvc.GetManifest()
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -309,12 +417,49 @@ func (g *EchoGateway) setupVoltAgentRoutes() {
 		if err := c.Bind(&body); err != nil {
 			return c.String(http.StatusBadRequest, err.Error())
 		}
-		result, err := g.voltSvc.ExecuteTool(body.ToolID, body.Args)
+		result, err := g.voltSvc.ExecuteTool(c.Request().Context(), body.ToolID, body.Args, voltagent.RequestMetadata{
+			RequestID:     c.Request().Header.Get("X-Request-Id"),
+			CorrelationID: c.Request().Header.Get("X-Correlation-Id"),
+			Source:        "voltagent_execute_route",
+		})
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return c.JSON(statusCodeForVoltAgentError(err), map[string]string{"error": err.Error()})
+		}
+
+		if record, ok := result.(map[string]string); ok {
+			if workflowID := record["workflow_id"]; workflowID != "" {
+				logs := []string{firstNonEmpty(record["message"], "Workflow started.")}
+				_ = g.persistWorkflowStart(
+					c.Request().Context(),
+					workflowID,
+					inferWorkflowKind(body.ToolID),
+					inferWorkflowName(body.ToolID, workflowID, body.Args),
+					firstNonEmpty(record["current_step"], "INIT"),
+					logs,
+					inferWorkflowArtifacts(body.ToolID, body.Args, record),
+				)
+			}
 		}
 		return c.JSON(http.StatusOK, result)
 	})
+}
+
+func statusCodeForVoltAgentError(err error) int {
+	var apiErr *voltagentclient.APIError
+	if err != nil && errors.As(err, &apiErr) {
+		if apiErr.StatusCode > 0 {
+			return apiErr.StatusCode
+		}
+		switch apiErr.Code {
+		case voltagentclient.CodeUnavailable, voltagentclient.CodeTimeout:
+			return http.StatusServiceUnavailable
+		case voltagentclient.CodeInvalidRequest, voltagentclient.CodeUnsupportedIntent, voltagentclient.CodeUnsupportedContractVersion:
+			return http.StatusBadRequest
+		case voltagentclient.CodePlanInvalid, voltagentclient.CodeBadResponse:
+			return http.StatusBadGateway
+		}
+	}
+	return http.StatusInternalServerError
 }
 
 func (g *EchoGateway) setupChatRoutes() {
@@ -720,7 +865,59 @@ func (g *EchoGateway) setupWorkflowRoutes() {
 	workflows := g.echo.Group("/workflows")
 
 	workflows.GET("", func(c echo.Context) error {
+		records, err := g.listWorkflowExecutionRecords(c.Request().Context())
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		if len(records) > 0 {
+			return c.JSON(http.StatusOK, records)
+		}
 		return c.JSON(http.StatusOK, inMemoryWorkflows)
+	})
+
+	workflows.GET("/:id", func(c echo.Context) error {
+		storedRecord, storedErr := g.getWorkflowExecutionRecord(c.Request().Context(), c.Param("id"))
+		if storedErr != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": storedErr.Error()})
+		}
+
+		if g.voltSvc == nil {
+			if storedRecord != nil {
+				return c.JSON(http.StatusOK, storedRecord)
+			}
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{
+				"error":   "service_unavailable",
+				"message": "Workflow status service is not configured",
+			})
+		}
+
+		status, err := g.voltSvc.GetWorkflowStatus(c.Param("id"))
+		if err != nil {
+			if storedRecord != nil {
+				return c.JSON(http.StatusOK, storedRecord)
+			}
+			return c.JSON(http.StatusNotFound, map[string]string{
+				"error":   "workflow_not_found",
+				"message": err.Error(),
+			})
+		}
+
+		record, persistErr := g.persistWorkflowStatus(c.Request().Context(), c.Param("id"), status)
+		if persistErr != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": persistErr.Error()})
+		}
+		if record != nil {
+			return c.JSON(http.StatusOK, record)
+		}
+		return c.JSON(http.StatusOK, status)
+	})
+
+	g.echo.GET("/logs", func(c echo.Context) error {
+		entries, err := g.listWorkflowLogEntries(c.Request().Context())
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, entries)
 	})
 
 	workflows.POST("", func(c echo.Context) error {

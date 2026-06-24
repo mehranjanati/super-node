@@ -4,13 +4,54 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"nexus-super-node-v3/internal/adapters/ai"
+	"nexus-super-node-v3/internal/adapters/voltagentclient"
 	"nexus-super-node-v3/internal/core/domain"
 	"nexus-super-node-v3/internal/workflow"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 )
+
+const (
+	planningSourceRemote   = "remote_voltagent"
+	planningSourceEmbedded = "embedded_fallback"
+)
+
+type deploymentStartResult struct {
+	Status         string
+	WorkflowID     string
+	RunID          string
+	CurrentStep    string
+	Message        string
+	PlanningSource string
+	Data           map[string]string
+}
+
+func (r deploymentStartResult) asStringMap() map[string]string {
+	return map[string]string{
+		"status":          r.Status,
+		"workflow_id":     r.WorkflowID,
+		"run_id":          r.RunID,
+		"current_step":    r.CurrentStep,
+		"message":         r.Message,
+		"planning_source": r.PlanningSource,
+	}
+}
+
+func (r deploymentStartResult) asAnyMap() map[string]interface{} {
+	return map[string]interface{}{
+		"status":          r.Status,
+		"workflow_id":     r.WorkflowID,
+		"run_id":          r.RunID,
+		"current_step":    r.CurrentStep,
+		"message":         r.Message,
+		"planning_source": r.PlanningSource,
+		"data":            r.Data,
+	}
+}
 
 // StreamChat forwards chat messages to the AI adapter via VoltAgent
 func (s *VoltAgentService) StreamChat(ctx context.Context, messages []ai.ChatMessage) (<-chan string, <-chan error) {
@@ -117,92 +158,18 @@ func (s *VoltAgentService) GetManifest() (*VoltAgentManifest, error) {
 	return manifest, nil
 }
 
-// ExecuteTool forwards a request from VoltAgent to the MCP service or triggers internal workflows
-func (s *VoltAgentService) ExecuteTool(toolID string, args map[string]interface{}) (interface{}, error) {
+// ExecuteTool forwards a request from VoltAgent to the MCP service or triggers internal workflows.
+func (s *VoltAgentService) ExecuteTool(ctx context.Context, toolID string, args map[string]interface{}, meta RequestMetadata) (interface{}, error) {
 	if toolID == "system__deploy_website" {
-		// ... existing logic ...
-		projectName, _ := args["project_name"].(string)
-		prompt, _ := args["prompt"].(string)
-		theme, _ := args["theme"].(string)
-		framework, _ := args["framework"].(string)
-
-		pipelineDef := domain.PipelineDefinition{
-			ID:      "website-deployment-v1",
-			Name:    "Standard Website Deployment",
-			Version: "1.0.0",
-			Inputs:  []string{"project_name", "prompt", "theme", "framework"},
-			Steps: []domain.PipelineStep{
-				{
-					ID:           "gen_ui",
-					ActivityName: "GenerateUISchemaWrapper",
-					Args: map[string]interface{}{
-						"project_name": "{{project_name}}",
-						"prompt":       "{{prompt}}",
-						"theme":        "{{theme}}",
-						"framework":    "{{framework}}",
-					},
-					ResultKey: "ui_schema",
-				},
-				{
-					ID:           "gen_code",
-					ActivityName: "GenerateSourceCodeWrapper",
-					Args: map[string]interface{}{
-						"schema": "{{ui_schema}}",
-					},
-					ResultKey: "source_code",
-				},
-				{
-					ID:           "git_push",
-					ActivityName: "PushToRepositoryWrapper",
-					Args: map[string]interface{}{
-						"project_name": "{{project_name}}",
-						"prompt":       "{{prompt}}",
-						"files":        "{{source_code}}",
-					},
-					ResultKey: "pr_url",
-				},
-				{
-					ID:           "build_wasm",
-					ActivityName: "BuildWebsiteBundleWrapper",
-					Args: map[string]interface{}{
-						"project_name": "{{project_name}}",
-					},
-					ResultKey: "bundle_path",
-				},
-				{
-					ID:           "deploy_hosting",
-					ActivityName: "DeployToHostingWrapper",
-					Args: map[string]interface{}{
-						"bundle_path": "{{bundle_path}}",
-					},
-					ResultKey: "deployment_result",
-				},
-			},
-		}
-
-		options := client.StartWorkflowOptions{
-			ID:        fmt.Sprintf("deploy-site-%s", projectName),
-			TaskQueue: "handoff-task-queue",
-		}
-
-		inputs := map[string]interface{}{
-			"project_name": projectName,
-			"prompt":       prompt,
-			"theme":        theme,
-			"framework":    framework,
-		}
-
-		we, err := s.temporalClient.ExecuteWorkflow(context.Background(), options, workflow.DynamicPipelineWorkflow, pipelineDef, inputs)
+		input, err := websiteDeploymentInputFromArgs(args)
 		if err != nil {
 			return nil, err
 		}
-
-		return map[string]string{
-			"status":      "started",
-			"workflow_id": we.GetID(),
-			"run_id":      we.GetRunID(),
-			"message":     "Website deployment initiated via Dynamic Pipeline. You will be notified once it is live.",
-		}, nil
+		result, err := s.startWebsiteDeployment(ctx, input, meta)
+		if err != nil {
+			return nil, err
+		}
+		return result.asStringMap(), nil
 	}
 
 	if toolID == "system__crypto_analysis" {
@@ -285,4 +252,384 @@ func (s *VoltAgentService) ExecuteTool(toolID string, args map[string]interface{
 	}
 
 	return nil, fmt.Errorf("unknown tool ID format: %s", toolID)
+}
+
+func (s *VoltAgentService) StartWebsiteDeployment(ctx context.Context, input WebsiteDeploymentInput, meta RequestMetadata) (map[string]interface{}, error) {
+	result, err := s.startWebsiteDeployment(ctx, input, meta)
+	if err != nil {
+		return nil, err
+	}
+	return result.asAnyMap(), nil
+}
+
+func (s *VoltAgentService) GetWorkflowStatus(workflowID string) (*workflow.DummyDeploymentStatus, error) {
+	if s.temporalClient == nil {
+		return nil, fmt.Errorf("temporal client not configured")
+	}
+
+	queryResult, err := s.temporalClient.QueryWorkflow(context.Background(), workflowID, "", workflow.DummyDeploymentStatusQuery)
+	if err == nil {
+		var status workflow.DummyDeploymentStatus
+		if getErr := queryResult.Get(&status); getErr == nil {
+			status.WorkflowID = workflowID
+			return &status, nil
+		}
+	}
+
+	description, describeErr := s.temporalClient.DescribeWorkflowExecution(context.Background(), workflowID, "")
+	if describeErr != nil {
+		if err != nil {
+			return nil, err
+		}
+		return nil, describeErr
+	}
+
+	info := description.GetWorkflowExecutionInfo()
+	if info != nil && info.Status == enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED {
+		var status workflow.DummyDeploymentStatus
+		if getErr := s.temporalClient.GetWorkflow(context.Background(), workflowID, "").Get(context.Background(), &status); getErr == nil {
+			status.WorkflowID = workflowID
+			return &status, nil
+		}
+	}
+
+	status := &workflow.DummyDeploymentStatus{
+		WorkflowID:  workflowID,
+		Status:      mapTemporalStatus(info.GetStatus()),
+		CurrentStep: "INIT",
+		Logs:        []string{"Workflow status resolved from Temporal metadata."},
+	}
+	if info != nil && info.CloseTime != nil && info.Status == enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED {
+		status.CurrentStep = "DONE"
+	}
+
+	return status, nil
+}
+
+func sanitizeWorkflowToken(value string) string {
+	token := strings.ToLower(strings.TrimSpace(value))
+	token = strings.ReplaceAll(token, " ", "-")
+	token = strings.ReplaceAll(token, "_", "-")
+	token = strings.ReplaceAll(token, "/", "-")
+	token = strings.ReplaceAll(token, ".", "-")
+	if token == "" {
+		return "deploy"
+	}
+	return token
+}
+
+func mapTemporalStatus(status enumspb.WorkflowExecutionStatus) string {
+	switch status {
+	case enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED:
+		return "COMPLETED"
+	case enumspb.WORKFLOW_EXECUTION_STATUS_FAILED, enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED, enumspb.WORKFLOW_EXECUTION_STATUS_TIMED_OUT, enumspb.WORKFLOW_EXECUTION_STATUS_CANCELED:
+		return "FAILED"
+	default:
+		return "RUNNING"
+	}
+}
+
+func (s *VoltAgentService) startWebsiteDeployment(ctx context.Context, input WebsiteDeploymentInput, meta RequestMetadata) (deploymentStartResult, error) {
+	normalized, err := normalizeWebsiteDeploymentInput(input)
+	if err != nil {
+		return deploymentStartResult{}, err
+	}
+
+	if s.remotePlanningEnabled() && s.remoteClient != nil {
+		result, err := s.startRemotePlannedWebsiteDeployment(ctx, normalized, meta)
+		if err == nil {
+			return result, nil
+		}
+		if !s.embeddedFallbackEnabled() {
+			return deploymentStartResult{}, err
+		}
+		return s.startEmbeddedWebsiteDeployment(ctx, normalized, fmt.Sprintf("Website deployment initiated via embedded fallback after remote planning failed: %v", err))
+	}
+
+	if s.remotePlanningEnabled() && s.remoteClient == nil && !s.embeddedFallbackEnabled() {
+		return deploymentStartResult{}, fmt.Errorf("voltagent remote planning is enabled but client is not configured")
+	}
+
+	if !s.remotePlanningEnabled() && !s.embeddedFallbackEnabled() {
+		return deploymentStartResult{}, fmt.Errorf("voltagent remote planning is disabled and embedded fallback is not allowed")
+	}
+
+	return s.startEmbeddedWebsiteDeployment(ctx, normalized, "Website deployment initiated via embedded fallback.")
+}
+
+func (s *VoltAgentService) startRemotePlannedWebsiteDeployment(ctx context.Context, input WebsiteDeploymentInput, meta RequestMetadata) (deploymentStartResult, error) {
+	planReq := &voltagentclient.PlanRequest{
+		ContractVersion: s.contractVersion(),
+		Intent:          "deploy_website",
+		Input: map[string]any{
+			"project_name": input.ProjectName,
+			"prompt":       input.Prompt,
+			"framework":    input.Framework,
+			"theme":        input.Theme,
+		},
+		Context: map[string]any{
+			"source": firstNonEmptyString(meta.Source, "go-gateway"),
+		},
+	}
+	if meta.RequestID != "" {
+		planReq.Context["request_id"] = meta.RequestID
+	}
+	if meta.CorrelationID != "" {
+		planReq.Context["correlation_id"] = meta.CorrelationID
+	}
+
+	planResp, err := s.remoteClient.Plan(ctx, planReq, voltagentclient.RequestOptions{
+		RequestID:     meta.RequestID,
+		CorrelationID: meta.CorrelationID,
+	})
+	if err != nil {
+		return deploymentStartResult{}, err
+	}
+
+	return s.executeRemoteWebsitePlan(ctx, input, planResp.Plan)
+}
+
+func (s *VoltAgentService) executeRemoteWebsitePlan(ctx context.Context, input WebsiteDeploymentInput, plan *voltagentclient.ExecutionPlan) (deploymentStartResult, error) {
+	if plan == nil {
+		return deploymentStartResult{}, fmt.Errorf("remote voltagent plan is missing")
+	}
+	if plan.Intent != "deploy_website" {
+		return deploymentStartResult{}, fmt.Errorf("unsupported remote plan intent: %s", plan.Intent)
+	}
+	if plan.Kind != "workflow" {
+		return deploymentStartResult{}, fmt.Errorf("unsupported remote plan kind: %s", plan.Kind)
+	}
+	if plan.ExecutionTarget != "go-temporal" {
+		return deploymentStartResult{}, fmt.Errorf("unsupported remote execution target: %s", plan.ExecutionTarget)
+	}
+	if plan.Workflow.Action != "start_dynamic_pipeline" {
+		return deploymentStartResult{}, fmt.Errorf("unsupported remote workflow action: %s", plan.Workflow.Action)
+	}
+
+	plannedInput := mergeWebsiteDeploymentInput(input, plan.Workflow.Input)
+	result, err := s.executeWebsiteDeploymentWorkflow(ctx, plannedInput, planningSourceRemote)
+	if err != nil {
+		return deploymentStartResult{}, err
+	}
+
+	if len(plan.Warnings) > 0 {
+		result.Message = fmt.Sprintf("%s Warnings: %s", result.Message, strings.Join(plan.Warnings, "; "))
+	}
+	return result, nil
+}
+
+func (s *VoltAgentService) startEmbeddedWebsiteDeployment(ctx context.Context, input WebsiteDeploymentInput, message string) (deploymentStartResult, error) {
+	result, err := s.executeWebsiteDeploymentWorkflow(ctx, input, planningSourceEmbedded)
+	if err != nil {
+		return deploymentStartResult{}, err
+	}
+	result.Message = message
+	return result, nil
+}
+
+func (s *VoltAgentService) executeWebsiteDeploymentWorkflow(ctx context.Context, input WebsiteDeploymentInput, planningSource string) (deploymentStartResult, error) {
+	if s.temporalClient == nil {
+		return deploymentStartResult{}, fmt.Errorf("temporal client not configured")
+	}
+
+	workflowID := fmt.Sprintf("deploy-site-%s-%d", sanitizeWorkflowToken(input.ProjectName), time.Now().UnixMilli())
+	options := client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: "handoff-task-queue",
+	}
+
+	workflowInputs := map[string]interface{}{
+		"project_name": input.ProjectName,
+		"prompt":       input.Prompt,
+		"theme":        input.Theme,
+		"framework":    input.Framework,
+	}
+
+	we, err := s.temporalClient.ExecuteWorkflow(ctx, options, workflow.DynamicPipelineWorkflow, websiteDeploymentPipelineDefinition(), workflowInputs)
+	if err != nil {
+		return deploymentStartResult{}, err
+	}
+
+	message := "Website deployment initiated via remote VoltAgent plan."
+	if planningSource == planningSourceEmbedded {
+		message = "Website deployment initiated via embedded fallback."
+	}
+
+	return deploymentStartResult{
+		Status:         "started",
+		WorkflowID:     we.GetID(),
+		RunID:          we.GetRunID(),
+		CurrentStep:    "INIT",
+		Message:        message,
+		PlanningSource: planningSource,
+		Data: map[string]string{
+			"project_name": input.ProjectName,
+			"template":     firstNonEmptyString(input.Template, input.Framework),
+			"framework":    input.Framework,
+			"theme":        input.Theme,
+		},
+	}, nil
+}
+
+func websiteDeploymentPipelineDefinition() domain.PipelineDefinition {
+	return domain.PipelineDefinition{
+		ID:      "website-deployment-v1",
+		Name:    "Standard Website Deployment",
+		Version: "1.0.0",
+		Inputs:  []string{"project_name", "prompt", "theme", "framework"},
+		Steps: []domain.PipelineStep{
+			{
+				ID:           "gen_ui",
+				ActivityName: "GenerateUISchemaWrapper",
+				Args: map[string]interface{}{
+					"project_name": "{{project_name}}",
+					"prompt":       "{{prompt}}",
+					"theme":        "{{theme}}",
+					"framework":    "{{framework}}",
+				},
+				ResultKey: "ui_schema",
+			},
+			{
+				ID:           "gen_code",
+				ActivityName: "GenerateSourceCodeWrapper",
+				Args: map[string]interface{}{
+					"schema": "{{ui_schema}}",
+				},
+				ResultKey: "source_code",
+			},
+			{
+				ID:           "git_push",
+				ActivityName: "PushToRepositoryWrapper",
+				Args: map[string]interface{}{
+					"project_name": "{{project_name}}",
+					"prompt":       "{{prompt}}",
+					"files":        "{{source_code}}",
+				},
+				ResultKey: "pr_url",
+			},
+			{
+				ID:           "build_wasm",
+				ActivityName: "BuildWebsiteBundleWrapper",
+				Args: map[string]interface{}{
+					"project_name": "{{project_name}}",
+				},
+				ResultKey: "bundle_path",
+			},
+			{
+				ID:           "deploy_hosting",
+				ActivityName: "DeployToHostingWrapper",
+				Args: map[string]interface{}{
+					"bundle_path": "{{bundle_path}}",
+				},
+				ResultKey: "deployment_result",
+			},
+		},
+	}
+}
+
+func websiteDeploymentInputFromArgs(args map[string]interface{}) (WebsiteDeploymentInput, error) {
+	if args == nil {
+		return WebsiteDeploymentInput{}, fmt.Errorf("deployment arguments are required")
+	}
+
+	return WebsiteDeploymentInput{
+		ProjectName: stringValue(args["project_name"]),
+		Prompt:      stringValue(args["prompt"]),
+		Template:    stringValue(args["template"]),
+		Theme:       stringValue(args["theme"]),
+		Framework:   stringValue(args["framework"]),
+	}, nil
+}
+
+func normalizeWebsiteDeploymentInput(input WebsiteDeploymentInput) (WebsiteDeploymentInput, error) {
+	normalized := input
+	normalized.ProjectName = strings.TrimSpace(normalized.ProjectName)
+	normalized.Prompt = strings.TrimSpace(normalized.Prompt)
+	normalized.Template = strings.TrimSpace(normalized.Template)
+	normalized.Theme = strings.TrimSpace(normalized.Theme)
+	normalized.Framework = strings.TrimSpace(normalized.Framework)
+
+	if normalized.ProjectName == "" {
+		return WebsiteDeploymentInput{}, fmt.Errorf("project_name is required")
+	}
+	if normalized.Framework == "" {
+		normalized.Framework = firstNonEmptyString(normalized.Template, "svelte")
+	}
+	if normalized.Theme == "" {
+		normalized.Theme = "minimal"
+	}
+	if normalized.Template == "" {
+		normalized.Template = normalized.Framework
+	}
+	if normalized.Prompt == "" {
+		normalized.Prompt = fmt.Sprintf("Deploy a %s website for project %s.", normalized.Framework, normalized.ProjectName)
+	}
+
+	return normalized, nil
+}
+
+func mergeWebsiteDeploymentInput(base WebsiteDeploymentInput, workflowInput map[string]any) WebsiteDeploymentInput {
+	merged := base
+	if workflowInput == nil {
+		return merged
+	}
+
+	if value := stringValue(workflowInput["project_name"]); value != "" {
+		merged.ProjectName = value
+	}
+	if value := stringValue(workflowInput["prompt"]); value != "" {
+		merged.Prompt = value
+	}
+	if value := stringValue(workflowInput["theme"]); value != "" {
+		merged.Theme = value
+	}
+	if value := stringValue(workflowInput["framework"]); value != "" {
+		merged.Framework = value
+		if merged.Template == "" {
+			merged.Template = value
+		}
+	}
+
+	normalized, err := normalizeWebsiteDeploymentInput(merged)
+	if err != nil {
+		return merged
+	}
+	return normalized
+}
+
+func (s *VoltAgentService) remotePlanningEnabled() bool {
+	if s.cfg == nil {
+		return s.remoteClient != nil
+	}
+	return s.cfg.VoltAgent.Enabled
+}
+
+func (s *VoltAgentService) embeddedFallbackEnabled() bool {
+	if s.cfg == nil {
+		return true
+	}
+	return s.cfg.VoltAgent.UseEmbeddedFallback
+}
+
+func (s *VoltAgentService) contractVersion() string {
+	if s.cfg == nil || strings.TrimSpace(s.cfg.VoltAgent.ContractVersion) == "" {
+		return voltagentclient.DefaultContractVersion
+	}
+	return s.cfg.VoltAgent.ContractVersion
+}
+
+func stringValue(value interface{}) string {
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return ""
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

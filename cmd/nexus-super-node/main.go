@@ -46,6 +46,7 @@ func main() {
 			agent.NewAgentService,
 			newFinanceService,
 			newOpenClawClient,
+			newVoltAgentClient,
 			newRedpandaClient,
 			func(c *redpanda.Client) ports.EventProducer { return c },
 			temporal.NewClient,
@@ -79,6 +80,7 @@ func main() {
 				go gateway.Start(context.Background())
 			}),
 			mcp.Module,
+			voltagent.Module,
 			fx.Invoke(registerConfiguredMCPServers),
 		)
 

@@ -5,6 +5,32 @@ networks:
     driver: bridge
 
 services:
+  voltagent-service:
+    build:
+      context: ./voltagent-service
+      dockerfile: Dockerfile
+    image: nexus-voltagent-service:latest
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - LOG_LEVEL=${VOLTAGENT_LOG_LEVEL:-info}
+      - PORT=${VOLTAGENT_PORT:-3141}
+    ports:
+      - "3141:3141"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3141/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
   # --- MONOLITH ROLE (ALL-IN-ONE) ---
   # Use this for Development or Single-Node Deployments
   nexus-monolith:
@@ -24,10 +50,13 @@ services:
       - NEXUS_OPENCLAW_GATEWAY_URL=http://openclaw:8095
       - NEXUS_HASURA_URL=http://hasura:8080/v1/graphql
       - NEXUS_POSTGRES_URL=postgres://postgres:password@postgres:5432/nexus_temporal?sslmode=disable
+      - NEXUS_OPENAI_API_KEY=${OPENAI_API_KEY:-}
     ports:
       - "8080:8080"
     networks:
       - nexus-net
+    depends_on:
+      - voltagent-service
     restart: unless-stopped
     profiles: ["monolith"]
 
@@ -49,11 +78,13 @@ services:
       - NEXUS_OPENCLAW_GATEWAY_URL=http://openclaw:8095
       - NEXUS_HASURA_URL=http://hasura:8080/v1/graphql
       - NEXUS_POSTGRES_URL=postgres://postgres:password@postgres:5432/nexus_temporal?sslmode=disable
+      - NEXUS_OPENAI_API_KEY=${OPENAI_API_KEY:-}
     ports:
       - "8080:8080"
     networks:
       - nexus-net
     depends_on:
+      - voltagent-service
       - nexus-worker # API might need workers to be ready to accept tasks? No, decoupled via queues.
     restart: always
 

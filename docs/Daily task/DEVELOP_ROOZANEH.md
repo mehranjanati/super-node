@@ -206,6 +206,6 @@ curl -X POST http://localhost:3000/internal/tools/deploy \
 - [x] روز 2: Contract بین BFF و Go
 - [x] روز 3: Tool Calling واقعی
 - [x] روز 4: تست مسیر کامل
-- [ ] روز 5: Temporal Dummy Workflow
-- [ ] روز 6: Persistence و Read Model
+- [x] روز 5: Temporal Dummy Workflow
+- [x] روز 6: Persistence و Read Model
 - [ ] روز 7: پایداری و تمیزکاری
