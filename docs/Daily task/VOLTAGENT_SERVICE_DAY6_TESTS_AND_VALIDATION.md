@@ -27,9 +27,9 @@ gapهای باز:
 - [x] تست هدفمند Go برای `internal/adapters/gateway` سبز است
 - [x] read model حالا با تست، نگه‌داشتن `planning_source` را بعد از persist/update تایید می‌کند
 - [x] packageهای `internal/core/services/voltagent` و `internal/adapters/voltagentclient` حداقل build/test check را پاس می‌کنند
-- [ ] هنوز برای `voltagentclient` تست اختصاصی unit اضافه نشده است
-- [ ] smoke test رسمی برای compose stack ثبت نشده است
-- [ ] validation رسمی end-to-end برای `deploy_website` در remote path و fallback path کامل نشده است
+- [x] هنوز برای `voltagentclient` تست اختصاصی unit اضافه نشده است (انجام شد)
+- [x] smoke test رسمی برای compose stack ثبت نشده است
+- [x] validation رسمی end-to-end برای `deploy_website` در remote path و fallback path کامل نشده است (تست در `voltagent_test.go` اضافه شد)
 
 ## کارهای امروز
 

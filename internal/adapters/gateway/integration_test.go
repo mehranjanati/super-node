@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"nexus-super-node-v3/internal/adapters/voltagentclient"
 	"nexus-super-node-v3/internal/core/domain"
 	"nexus-super-node-v3/internal/core/services/mcp"
+	"nexus-super-node-v3/internal/core/services/voltagent"
 	workflowpkg "nexus-super-node-v3/internal/workflow"
 
 	"github.com/stretchr/testify/assert"
@@ -237,6 +239,75 @@ func TestToolExecute(t *testing.T) {
 	// Assertions
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, "\"hello mcp\"", rec.Body.String())
+}
+
+func TestInternalHealthAggregatesVoltAgentStatus(t *testing.T) {
+	voltAgentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/health", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"status":"ok",
+			"service":"voltagent-service",
+			"contract_version":"v1alpha1",
+			"checks":{"api":"ok","planner":"ok"}
+		}`))
+	}))
+	defer voltAgentServer.Close()
+
+	remoteClient := voltagentclient.NewClient(voltAgentServer.URL, time.Second)
+	voltSvc := voltagent.NewVoltAgentService(nil, nil, nil, nil, remoteClient)
+
+	gateway := NewEchoGateway(nil, nil, nil, voltSvc, nil, nil, nil, nil, nil, nil)
+	gateway.setupHealthRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/health", nil)
+	rec := httptest.NewRecorder()
+	gateway.echo.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var payload map[string]any
+	err := json.Unmarshal(rec.Body.Bytes(), &payload)
+	assert.NoError(t, err)
+	assert.Equal(t, "ok", payload["status"])
+
+	dependencies, ok := payload["dependencies"].(map[string]any)
+	assert.True(t, ok)
+
+	voltagentDependency, ok := dependencies["voltagent_service"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "ok", voltagentDependency["status"])
+	assert.Equal(t, "voltagent-service", voltagentDependency["service"])
+	assert.Equal(t, "v1alpha1", voltagentDependency["contract_version"])
+}
+
+func TestInternalHealthReturnsDegradedWhenVoltAgentIsUnavailable(t *testing.T) {
+	remoteClient := voltagentclient.NewClient("http://127.0.0.1:1", 100*time.Millisecond)
+	voltSvc := voltagent.NewVoltAgentService(nil, nil, nil, nil, remoteClient)
+
+	gateway := NewEchoGateway(nil, nil, nil, voltSvc, nil, nil, nil, nil, nil, nil)
+	gateway.setupHealthRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/health", nil)
+	rec := httptest.NewRecorder()
+	gateway.echo.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+
+	var payload map[string]any
+	err := json.Unmarshal(rec.Body.Bytes(), &payload)
+	assert.NoError(t, err)
+	assert.Equal(t, "degraded", payload["status"])
+
+	dependencies, ok := payload["dependencies"].(map[string]any)
+	assert.True(t, ok)
+
+	voltagentDependency, ok := dependencies["voltagent_service"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "unavailable", voltagentDependency["status"])
+	assert.Equal(t, "VOLTAGENT_UNAVAILABLE", voltagentDependency["error_code"])
 }
 
 func TestWorkflowReadModelRoutes(t *testing.T) {

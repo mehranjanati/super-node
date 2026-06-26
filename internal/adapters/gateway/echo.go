@@ -37,6 +37,21 @@ type EchoGateway struct {
 	claw        *openclaw.Client
 }
 
+type dependencyHealth struct {
+	Status          string            `json:"status"`
+	Service         string            `json:"service"`
+	ContractVersion string            `json:"contract_version,omitempty"`
+	Checks          map[string]string `json:"checks,omitempty"`
+	ErrorCode       string            `json:"error_code,omitempty"`
+	Message         string            `json:"message,omitempty"`
+}
+
+type aggregatedHealthResponse struct {
+	Status       string                      `json:"status"`
+	Service      string                      `json:"service"`
+	Dependencies map[string]dependencyHealth `json:"dependencies"`
+}
+
 // NewEchoGateway creates a new EchoGateway.
 func NewEchoGateway(userRepo ports.UserRepository, appDataRepo ports.AppDataRepository, mcpSvc *mcp.MCPService, voltSvc *voltagent.VoltAgentService, chatSvc ports.ChatService, socialSvc ports.SocialService, financeSvc ports.FinanceService, agentSvc ports.AgentService, rp ports.EventProducer, claw *openclaw.Client) *EchoGateway {
 	e := echo.New()
@@ -77,24 +92,11 @@ func (g *EchoGateway) RegisterWebSocketRoutes(wsHandler *WebSocketHandler) {
 
 // Start starts the gateway.
 func (g *EchoGateway) Start(ctx context.Context) error {
-	g.echo.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{
-			"status":  "ok",
-			"service": "go-gateway",
-		})
-	})
-
-	g.echo.GET("/internal/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{
-			"status":  "ok",
-			"service": "go-gateway",
-		})
-	})
+	g.setupHealthRoutes()
 
 	g.setupAuthRoutes()
 	g.setupToolRoutes()
 	g.setupMCPRoutes()
-	g.setupVoltAgentRoutes()
 	g.setupHasuraRoutes()
 	g.setupChatRoutes()
 	g.setupSocialRoutes()
@@ -107,6 +109,67 @@ func (g *EchoGateway) Start(ctx context.Context) error {
 
 	// Use 3000 as default load balancer/gateway port
 	return g.echo.Start(":3000")
+}
+
+func (g *EchoGateway) setupHealthRoutes() {
+	g.echo.GET("/health", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{
+			"status":  "ok",
+			"service": "go-gateway",
+		})
+	})
+
+	g.echo.GET("/internal/health", func(c echo.Context) error {
+		response := aggregatedHealthResponse{
+			Status:  "ok",
+			Service: "go-gateway",
+			Dependencies: map[string]dependencyHealth{
+				"go_gateway": {
+					Status:  "ok",
+					Service: "go-gateway",
+				},
+			},
+		}
+
+		if g.voltSvc == nil {
+			response.Status = "degraded"
+			response.Dependencies["voltagent_service"] = dependencyHealth{
+				Status:    "unavailable",
+				Service:   "voltagent-service",
+				ErrorCode: "VOLTAGENT_NOT_CONFIGURED",
+				Message:   "VoltAgent service is not configured",
+			}
+			return c.JSON(http.StatusServiceUnavailable, response)
+		}
+
+		health, err := g.voltSvc.Health(c.Request().Context(), voltagent.RequestMetadata{
+			RequestID:     c.Request().Header.Get("X-Request-Id"),
+			CorrelationID: c.Request().Header.Get("X-Correlation-Id"),
+			Source:        "internal_health",
+		})
+		if err != nil {
+			response.Status = "degraded"
+			response.Dependencies["voltagent_service"] = dependencyHealth{
+				Status:    "unavailable",
+				Service:   "voltagent-service",
+				ErrorCode: voltAgentErrorCode(err),
+				Message:   err.Error(),
+			}
+			return c.JSON(statusCodeForVoltAgentError(err), response)
+		}
+
+		response.Dependencies["voltagent_service"] = dependencyHealth{
+			Status:          health.Status,
+			Service:         health.Service,
+			ContractVersion: health.ContractVersion,
+			Checks: map[string]string{
+				"api":     health.Checks.API,
+				"planner": health.Checks.Planner,
+			},
+		}
+
+		return c.JSON(http.StatusOK, response)
+	})
 }
 
 func (g *EchoGateway) setupInternalToolsRoutes() {
@@ -389,61 +452,6 @@ func (g *EchoGateway) setupMCPRoutes() {
 	})
 }
 
-func (g *EchoGateway) setupVoltAgentRoutes() {
-	volt := g.echo.Group("/voltagent")
-
-	// Manifest for VoltAgent (Tools definition)
-	volt.GET("/manifest", func(c echo.Context) error {
-		if g.voltSvc == nil {
-			return c.JSON(http.StatusServiceUnavailable, map[string]string{
-				"error":   "service_unavailable",
-				"message": "VoltAgent service is not configured",
-			})
-		}
-
-		manifest, err := g.voltSvc.GetManifest()
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		return c.JSON(http.StatusOK, manifest)
-	})
-
-	// Execution endpoint for VoltAgent tools
-	volt.POST("/execute", func(c echo.Context) error {
-		var body struct {
-			ToolID string                 `json:"tool_id"`
-			Args   map[string]interface{} `json:"args"`
-		}
-		if err := c.Bind(&body); err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
-		}
-		result, err := g.voltSvc.ExecuteTool(c.Request().Context(), body.ToolID, body.Args, voltagent.RequestMetadata{
-			RequestID:     c.Request().Header.Get("X-Request-Id"),
-			CorrelationID: c.Request().Header.Get("X-Correlation-Id"),
-			Source:        "voltagent_execute_route",
-		})
-		if err != nil {
-			return c.JSON(statusCodeForVoltAgentError(err), map[string]string{"error": err.Error()})
-		}
-
-		if record, ok := result.(map[string]string); ok {
-			if workflowID := record["workflow_id"]; workflowID != "" {
-				logs := []string{firstNonEmpty(record["message"], "Workflow started.")}
-				_ = g.persistWorkflowStart(
-					c.Request().Context(),
-					workflowID,
-					inferWorkflowKind(body.ToolID),
-					inferWorkflowName(body.ToolID, workflowID, body.Args),
-					firstNonEmpty(record["current_step"], "INIT"),
-					logs,
-					inferWorkflowArtifacts(body.ToolID, body.Args, record),
-				)
-			}
-		}
-		return c.JSON(http.StatusOK, result)
-	})
-}
-
 func statusCodeForVoltAgentError(err error) int {
 	var apiErr *voltagentclient.APIError
 	if err != nil && errors.As(err, &apiErr) {
@@ -460,6 +468,14 @@ func statusCodeForVoltAgentError(err error) int {
 		}
 	}
 	return http.StatusInternalServerError
+}
+
+func voltAgentErrorCode(err error) string {
+	var apiErr *voltagentclient.APIError
+	if err != nil && errors.As(err, &apiErr) && apiErr.Code != "" {
+		return apiErr.Code
+	}
+	return "VOLTAGENT_UNKNOWN_ERROR"
 }
 
 func (g *EchoGateway) setupChatRoutes() {

@@ -123,7 +123,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("postgres.url", "postgres://postgres:password@localhost:5432/chatwoot_dev?sslmode=disable")
 	viper.SetDefault("rivet.service_url", "localhost:50051")
 	viper.SetDefault("benthos.api_url", "http://wasm-processor:4195")
-	viper.SetDefault("voltagent.base_url", "http://voltagent-service:3141")
+	viper.SetDefault("voltagent.base_url", "http://localhost:3141")
 	viper.SetDefault("voltagent.timeout", "5s")
 	viper.SetDefault("voltagent.enabled", false)
 	viper.SetDefault("voltagent.use_embedded_fallback", true)

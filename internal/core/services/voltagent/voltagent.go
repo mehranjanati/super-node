@@ -2,7 +2,9 @@ package voltagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -67,7 +69,69 @@ func (s *VoltAgentService) StreamChat(ctx context.Context, messages []ai.ChatMes
 	return s.aiClient.StreamChat(ctx, messages)
 }
 
-// GetManifest returns a manifest of all available tools for VoltAgent
+// Health checks whether the remote voltagent-service is reachable and healthy.
+func (s *VoltAgentService) Health(ctx context.Context, meta RequestMetadata) (*voltagentclient.HealthResponse, error) {
+	if s == nil || s.remoteClient == nil {
+		return nil, &voltagentclient.APIError{
+			Code:      voltagentclient.CodeUnavailable,
+			Message:   "VoltAgent service is not configured",
+			Retryable: false,
+		}
+	}
+
+	startedAt := time.Now()
+	resp, err := s.remoteClient.Health(ctx, voltagentclient.RequestOptions{
+		RequestID:     meta.RequestID,
+		CorrelationID: meta.CorrelationID,
+	})
+
+	if err != nil {
+		errorCode, retryable := classifyVoltAgentError(err)
+		logVoltAgentEvent("health_check_error", meta, map[string]any{
+			"latency_ms": time.Since(startedAt).Milliseconds(),
+			"error_code": errorCode,
+			"retryable":  retryable,
+			"error":      err.Error(),
+		})
+		return nil, err
+	}
+
+	logVoltAgentEvent("health_check_success", meta, map[string]any{
+		"latency_ms":       time.Since(startedAt).Milliseconds(),
+		"service_status":   resp.Status,
+		"contract_version": resp.ContractVersion,
+	})
+
+	return resp, nil
+}
+
+func logVoltAgentEvent(event string, meta RequestMetadata, fields map[string]any) {
+	parts := []string{
+		"component=voltagent",
+		fmt.Sprintf("event=%s", event),
+		fmt.Sprintf("source=%s", firstNonEmptyString(meta.Source, "go-gateway")),
+		fmt.Sprintf("request_id=%s", firstNonEmptyString(meta.RequestID, "-")),
+		fmt.Sprintf("correlation_id=%s", firstNonEmptyString(meta.CorrelationID, "-")),
+	}
+
+	for key, value := range fields {
+		parts = append(parts, fmt.Sprintf("%s=%v", key, value))
+	}
+
+	log.Print(strings.Join(parts, " "))
+}
+
+func classifyVoltAgentError(err error) (code string, retryable bool) {
+	var apiErr *voltagentclient.APIError
+	if err != nil && errors.As(err, &apiErr) {
+		return firstNonEmptyString(apiErr.Code, "VOLTAGENT_UNKNOWN_ERROR"), apiErr.Retryable
+	}
+	return "VOLTAGENT_UNKNOWN_ERROR", false
+}
+
+// GetManifest returns a manifest of all available tools.
+// DEPRECATED: This embedded tool discovery facade is being migrated to the remote voltagent-service.
+// It remains in phase 1 for backward compatibility with older UI components.
 func (s *VoltAgentService) GetManifest() (*VoltAgentManifest, error) {
 	manifest := &VoltAgentManifest{
 		Version: "1.0.0",
@@ -158,7 +222,10 @@ func (s *VoltAgentService) GetManifest() (*VoltAgentManifest, error) {
 	return manifest, nil
 }
 
-// ExecuteTool forwards a request from VoltAgent to the MCP service or triggers internal workflows.
+// ExecuteTool forwards a request to the MCP service or triggers internal workflows.
+// DEPRECATED: Direct tool execution via this embedded facade is being phased out.
+// Callers should use the /plan endpoint on the remote voltagent-service instead.
+// Retained in phase 1 for non-deployment tools (like crypto_analysis) and UI compatibility.
 func (s *VoltAgentService) ExecuteTool(ctx context.Context, toolID string, args map[string]interface{}, meta RequestMetadata) (interface{}, error) {
 	if toolID == "system__deploy_website" {
 		input, err := websiteDeploymentInputFromArgs(args)
@@ -330,20 +397,65 @@ func mapTemporalStatus(status enumspb.WorkflowExecutionStatus) string {
 }
 
 func (s *VoltAgentService) startWebsiteDeployment(ctx context.Context, input WebsiteDeploymentInput, meta RequestMetadata) (deploymentStartResult, error) {
-	normalized, err := normalizeWebsiteDeploymentInput(input)
-	if err != nil {
-		return deploymentStartResult{}, err
+	normalized, normalizeErr := normalizeWebsiteDeploymentInput(input)
+	if normalizeErr != nil {
+		return deploymentStartResult{}, normalizeErr
 	}
 
 	if s.remotePlanningEnabled() && s.remoteClient != nil {
+		remoteStartedAt := time.Now()
 		result, err := s.startRemotePlannedWebsiteDeployment(ctx, normalized, meta)
 		if err == nil {
+			logVoltAgentEvent("remote_voltagent_success", meta, map[string]any{
+				"planning_source": result.PlanningSource,
+				"latency_ms":      time.Since(remoteStartedAt).Milliseconds(),
+				"project_name":    normalized.ProjectName,
+				"workflow_id":     result.WorkflowID,
+				"run_id":          result.RunID,
+				"current_step":    result.CurrentStep,
+			})
 			return result, nil
 		}
+
+		errorCode, retryable := classifyVoltAgentError(err)
+		logVoltAgentEvent("remote_voltagent_error", meta, map[string]any{
+			"latency_ms":   time.Since(remoteStartedAt).Milliseconds(),
+			"project_name": normalized.ProjectName,
+			"error_code":   errorCode,
+			"retryable":    retryable,
+			"error":        err.Error(),
+		})
+
 		if !s.embeddedFallbackEnabled() {
 			return deploymentStartResult{}, err
 		}
-		return s.startEmbeddedWebsiteDeployment(ctx, normalized, fmt.Sprintf("Website deployment initiated via embedded fallback after remote planning failed: %v", err))
+
+		logVoltAgentEvent("embedded_fallback_selected", meta, map[string]any{
+			"project_name": normalized.ProjectName,
+			"reason":       "remote_planning_failed",
+			"error_code":   errorCode,
+		})
+
+		fallbackStartedAt := time.Now()
+		fallbackResult, fallbackErr := s.startEmbeddedWebsiteDeployment(ctx, normalized, fmt.Sprintf("Website deployment initiated via embedded fallback after remote planning failed: %v", err))
+		if fallbackErr != nil {
+			logVoltAgentEvent("embedded_fallback_error", meta, map[string]any{
+				"latency_ms":   time.Since(fallbackStartedAt).Milliseconds(),
+				"project_name": normalized.ProjectName,
+				"error":        fallbackErr.Error(),
+			})
+			return deploymentStartResult{}, fallbackErr
+		}
+
+		logVoltAgentEvent("embedded_fallback_success", meta, map[string]any{
+			"planning_source": fallbackResult.PlanningSource,
+			"latency_ms":      time.Since(fallbackStartedAt).Milliseconds(),
+			"project_name":    normalized.ProjectName,
+			"workflow_id":     fallbackResult.WorkflowID,
+			"run_id":          fallbackResult.RunID,
+			"current_step":    fallbackResult.CurrentStep,
+		})
+		return fallbackResult, nil
 	}
 
 	if s.remotePlanningEnabled() && s.remoteClient == nil && !s.embeddedFallbackEnabled() {
@@ -354,7 +466,31 @@ func (s *VoltAgentService) startWebsiteDeployment(ctx context.Context, input Web
 		return deploymentStartResult{}, fmt.Errorf("voltagent remote planning is disabled and embedded fallback is not allowed")
 	}
 
-	return s.startEmbeddedWebsiteDeployment(ctx, normalized, "Website deployment initiated via embedded fallback.")
+	logVoltAgentEvent("embedded_fallback_selected", meta, map[string]any{
+		"project_name": normalized.ProjectName,
+		"reason":       "remote_planning_disabled",
+	})
+
+	fallbackStartedAt := time.Now()
+	result, err := s.startEmbeddedWebsiteDeployment(ctx, normalized, "Website deployment initiated via embedded fallback.")
+	if err != nil {
+		logVoltAgentEvent("embedded_fallback_error", meta, map[string]any{
+			"latency_ms":   time.Since(fallbackStartedAt).Milliseconds(),
+			"project_name": normalized.ProjectName,
+			"error":        err.Error(),
+		})
+		return deploymentStartResult{}, err
+	}
+
+	logVoltAgentEvent("embedded_fallback_success", meta, map[string]any{
+		"planning_source": result.PlanningSource,
+		"latency_ms":      time.Since(fallbackStartedAt).Milliseconds(),
+		"project_name":    normalized.ProjectName,
+		"workflow_id":     result.WorkflowID,
+		"run_id":          result.RunID,
+		"current_step":    result.CurrentStep,
+	})
+	return result, nil
 }
 
 func (s *VoltAgentService) startRemotePlannedWebsiteDeployment(ctx context.Context, input WebsiteDeploymentInput, meta RequestMetadata) (deploymentStartResult, error) {
@@ -378,13 +514,29 @@ func (s *VoltAgentService) startRemotePlannedWebsiteDeployment(ctx context.Conte
 		planReq.Context["correlation_id"] = meta.CorrelationID
 	}
 
+	startedAt := time.Now()
 	planResp, err := s.remoteClient.Plan(ctx, planReq, voltagentclient.RequestOptions{
 		RequestID:     meta.RequestID,
 		CorrelationID: meta.CorrelationID,
 	})
+
 	if err != nil {
+		errorCode, retryable := classifyVoltAgentError(err)
+		logVoltAgentEvent("plan_request_error", meta, map[string]any{
+			"latency_ms": time.Since(startedAt).Milliseconds(),
+			"intent":     planReq.Intent,
+			"error_code": errorCode,
+			"retryable":  retryable,
+			"error":      err.Error(),
+		})
 		return deploymentStartResult{}, err
 	}
+
+	logVoltAgentEvent("plan_request_success", meta, map[string]any{
+		"latency_ms": time.Since(startedAt).Milliseconds(),
+		"intent":     planReq.Intent,
+		"plan_kind":  planResp.Plan.Kind,
+	})
 
 	return s.executeRemoteWebsitePlan(ctx, input, planResp.Plan)
 }

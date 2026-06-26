@@ -242,6 +242,7 @@ services:
       - NEXUS_POSTGRES_URL=postgres://postgres:password@postgres:5432/chatwoot_dev?sslmode=disable
       - NEXUS_HASURA_URL=http://hasura:8080/v1/graphql
       - NEXUS_SERVER_PORT=3000
+      - NEXUS_VOLTAGENT_BASE_URL=http://voltagent-service:3141
       - NEXUS_OPENAI_API_KEY=${OPENAI_API_KEY:-} # Load from local .env or host env
       - TEMPORAL_HOST_PORT=temporal:7233
       - NEXUS_TIDB_DSN=root:@tcp(tidb:4000)/nexus?charset=utf8mb4&parseTime=True&loc=Local

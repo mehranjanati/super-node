@@ -72,7 +72,7 @@
 
 وضعیت:
 
-- `in_progress`
+- `done`
 
 کارهای done:
 
@@ -95,7 +95,7 @@
 
 وضعیت:
 
-- `in_progress`
+- `done`
 
 کارها:
 
@@ -114,7 +114,7 @@
 
 وضعیت:
 
-- `in_progress`
+- `done`
 
 کارها:
 
@@ -131,7 +131,7 @@
 
 وضعیت:
 
-- `in_progress`
+- `done`
 
 کارها:
 
@@ -148,7 +148,7 @@
 
 وضعیت:
 
-- `in_progress`
+- `done`
 
 کارها:
 
@@ -165,14 +165,14 @@
 
 وضعیت:
 
-- `pending`
+- `done`
 
 کارها:
 
-- deprecate کردن مسیرهای embedded از مسیر اصلی
-- sync نهایی docs
-- release checklist
-- incident/runbook کوتاه
+- [x] deprecate کردن مسیرهای embedded از مسیر اصلی
+- [x] sync نهایی docs
+- [x] release checklist
+- [x] incident/runbook کوتاه
 
 مرجع:
 
@@ -180,38 +180,11 @@
 
 ## لیست دقیق کارهای باقی‌مانده
 
-### Backend
+تمام کارهای تعریف‌شده در فاز اول (Phase 1) شامل تفکیک Runtime، تطبیق BFF و Portal، مانیتورینگ Health، پایداری Infra و نوشتن تست‌های End-to-End با موفقیت انجام شدند.
 
-- تفکیک روشن facade runtime از bridge embedded فعلی
-- migrate کردن call siteهای باقی‌مانده به مسیر جدید
-- بازنگری contract response برای routeهای جدید
-- افزودن تست اختصاصی برای `voltagentclient`
-
-### Runtime
-
-- عبور BFF از مسیر جدید به‌صورت شفاف
-- migrate شدن portal به contract داخلی `/internal/tools/*`
-- محدودشدن routeهای legacy به compatibility backend
-
-### Infra
-
-- اضافه‌کردن envهای explicit برای Go
-- health/readiness aggregation
-- internal-only policy برای `voltagent-service`
-- runbook و hardening deployment
-
-### Docs
-
-- نگه‌داشتن تمام day fileها داخل `docs/Daily task`
-- sync کردن هر روز بعد از هر تغییر واقعی در repo
-- جلوگیری از باقی‌ماندن bullets قدیمی در اسناد روزانه
-
-### Validation
-
-- unit test
-- integration test
-- e2e test
-- smoke test compose
+در فازهای بعدی:
+- حذف کامل Facadeهای embedded از Go.
+- انتقال بقیه Toolها به Remote Voltagent.
 
 ## قانون به‌روزرسانی
 

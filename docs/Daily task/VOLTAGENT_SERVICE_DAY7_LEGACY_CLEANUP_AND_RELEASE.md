@@ -26,10 +26,10 @@ gapهای باز:
 
 - [x] وابستگی‌های legacy اصلی مشخص‌اند: `/voltagent/manifest` و `/voltagent/execute`
 - [x] `BFF` برای deploy flow از route جدید Go استفاده می‌کند
-- [ ] routeهای legacy هنوز در `internal/adapters/gateway/echo.go` وجود دارند
-- [ ] `portal1` هنوز به routeهای legacy متکی است
-- [ ] facade embedded هنوز از backend حذف یا deprecate نهایی نشده است
-- [ ] release checklist و rollback plan هنوز ثبت نشده‌اند
+- [x] routeهای legacy هنوز در `internal/adapters/gateway/echo.go` وجود دارند (حذف شدند)
+- [x] `portal1` هنوز به routeهای legacy متکی است (اصلاح شد و به routeهای `internal/tools` تغییر یافت)
+- [x] facade embedded هنوز از backend حذف یا deprecate نهایی نشده است (Deprecation notice در کد اضافه شد)
+- [x] release checklist و rollback plan هنوز ثبت نشده‌اند
 
 ## کارهای امروز
 
@@ -76,6 +76,23 @@ gapهای باز:
 - تصمیم `BFF` و `portal1` نسبت به مسیر نهایی ثبت شده باشد
 - docs اصلی migration با repo sync و بدون ambiguity باشند
 - release readiness برای phase 1 با checklist و ownerهای روشن قابل ارزیابی باشد
+
+## Release Checklist & Rollback Plan (Phase 1)
+
+**Go/No-Go Criteria:**
+- [x] مسیر `deploy_website` از طریق `BFF` به درستی `remote_voltagent` را فراخوانی می‌کند و workflow را در Temporal استارت می‌زند.
+- [x] تست‌های `HealthAndFallbackValidation` صد درصد پاس می‌شوند و fallback به درستی کار می‌کند.
+- [x] مسیرهای legacy (`/voltagent/execute` و `/voltagent/manifest`) حذف شده‌اند.
+- [x] رابط کاربری و `portal1` با endpointهای جدید (`/internal/tools/execute` و `/internal/tools/manifest`) هماهنگ شده‌اند.
+
+**Rollback Plan:**
+در صورت بروز بحران در Production:
+1. سوییچ `VOLTAGENT_ENABLED=false` و `VOLTAGENT_USE_EMBEDDED_FALLBACK=true` در کانفیگ `Go` تا مسیر ترافیک به سمت logic داخلی قبلی تغییر کند.
+2. برگرداندن routeهای legacy در `echo.go` در صورت بروز قطعی در نسخه‌های قدیمی‌تر UI.
+
+**Owner & Handoff:**
+- مسئول نگهداری سرویس: تیم Core Backend / AI
+- پایش Health: از طریق مانیتورینگ مسیر `/health` در Voltagent Service و `/internal/health` در Go Gateway.
 
 ## carry-over به فاز بعد
 
