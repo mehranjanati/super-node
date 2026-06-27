@@ -456,13 +456,16 @@ If the user's request is about workflows in Persian or English, treat it as a wo
                     },
                   };
                 } catch (error) {
+                  const errorMessage = getErrorMessage(error);
+                  const isNotFound = errorMessage.toLowerCase().includes('not found');
+                  
                   console.error('[BFF] Error calling workflow insight endpoints:', error);
                   return {
                     status: 'error',
                     capability: 'workflow_insight',
                     question: normalizedQuestion,
-                    error: 'workflow_data_unavailable',
-                    message: `Failed to retrieve workflow insight: ${getErrorMessage(error)}`,
+                    error: isNotFound ? 'workflow_not_found' : 'workflow_data_unavailable',
+                    message: `Failed to retrieve workflow insight: ${errorMessage}`,
                   };
                 }
               },
