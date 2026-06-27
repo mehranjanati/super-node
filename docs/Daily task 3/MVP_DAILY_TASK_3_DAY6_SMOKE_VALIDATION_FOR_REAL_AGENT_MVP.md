@@ -157,6 +157,13 @@ curl -N -X POST http://localhost:3001/api/chat \
 - `BFF/index.ts`
 - `docs/Daily task 3/MVP_DAILY_TASK_3_DAY6_SMOKE_VALIDATION_FOR_REAL_AGENT_MVP.md`
 
+## وضعیت نهایی (Status)
+**وضعیت:** انجام شد (Done) - موفقیت‌آمیز ✅
+- اسکریپت `scripts/mvp_real_agent_smoke.sh` ساخته و اجرا شد.
+- رویکرد Isolated Testing برای BFF روی پورت ۳۰۰۲ با موفقیت پیاده‌سازی شد.
+- باگ عدم هندل کردن درست ارور 404 (تبدیل به `workflow_not_found`) کشف و در `BFF/index.ts` برطرف شد.
+- تمامی تست‌های تایپ (فرانت و بک‌اند) و همچنین Healthcheckها و شبیه‌سازی API موفقیت‌آمیز بودند.
+
 ## معیار done
 
 - smoke path رسمی این سری روی use case واقعی agent ثبت شده باشد
