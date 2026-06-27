@@ -204,7 +204,7 @@
 
 وضعیت:
 
-- `pending`
+- `completed`
 
 هدف:
 
@@ -241,6 +241,27 @@
 مرجع:
 
 - `docs/Daily task 3/MVP_DAILY_TASK_3_DAY7_MVP_RE_EVALUATION.md`
+
+### روز 8: Backend Orchestration Consolidation
+
+وضعیت:
+
+- `pending`
+
+هدف:
+
+- متمرکزکردن ownership orchestration capability فعلی در backend
+- سبک‌کردن `BFF` و نزدیک‌کردن آن به نقش bridge قراردادمحور
+
+خروجی مورد انتظار:
+
+- endpoint روشن backend-facing برای agent execution
+- انتقال orchestration اصلی `workflow_insight` از `BFF` به backend
+- حفظ compatibility فرانت و جلوگیری از regression در مسیرهای موجود
+
+مرجع:
+
+- `docs/Daily task 3/MVP_DAILY_TASK_3_DAY8_BACKEND_ORCHESTRATION_CONSOLIDATION.md`
 
 ## خروجی مورد انتظار
 

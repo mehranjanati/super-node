@@ -2,7 +2,7 @@ import { convertToModelMessages, streamText, tool } from 'ai';
 import { google } from '@ai-sdk/google';
 import { z } from 'zod';
 
-const PORT = 3001;
+const PORT = Number(process.env.PORT || 3001);
 const GO_SERVER_URL = process.env.GO_SERVER_URL || 'http://nexus-super-node:3000';
 const GO_TIMEOUT_MS = 10000;
 
@@ -50,6 +50,14 @@ type WorkflowLogRecord = {
   time?: string;
   status?: string;
   currentStep?: string;
+};
+
+type ChatRequestMessage = {
+  role?: string;
+  parts?: Array<{
+    type?: string;
+    text?: string;
+  }>;
 };
 
 function slugifyProjectName(value: string) {
@@ -236,6 +244,38 @@ function buildSelectedAgentPrompt(selectedAgent: SelectedAgentContext | null | u
 - tools: ${tools}`;
 }
 
+function getLatestUserText(messages: unknown) {
+  if (!Array.isArray(messages)) {
+    return '';
+  }
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i] as ChatRequestMessage;
+    if (message?.role !== 'user' || !Array.isArray(message.parts)) {
+      continue;
+    }
+
+    return message.parts
+      .filter((part) => part?.type === 'text')
+      .map((part) => part.text ?? '')
+      .join(' ')
+      .trim();
+  }
+
+  return '';
+}
+
+function isDeployIntent(text: string) {
+  return /deploy|website|site|landing|launch|build|create app|create website|سایت|وب.?سایت|لندینگ|دیپلوی|بساز/i.test(text);
+}
+
+function shouldForceWorkflowInsightTool(
+  selectedAgent: SelectedAgentContext | null,
+  latestUserText: string,
+) {
+  return selectedAgent?.config?.capability === 'workflow_insight' && !isDeployIntent(latestUserText);
+}
+
 console.log(`BFF Server is running on http://localhost:${PORT}`);
 
 Bun.serve({
@@ -276,6 +316,7 @@ Bun.serve({
         const currentPath = data?.currentPath || 'unknown';
         const currentRoute = data?.currentRoute || currentPath;
         const selectedAgent = (data?.selectedAgent ?? null) as SelectedAgentContext | null;
+        const latestUserText = getLatestUserText(messages);
 
         const systemPrompt = `You are VoltAgent, a helpful AI assistant for the Nexus platform. The user is currently on the page: ${currentPath} (route: ${currentRoute}). Use this context to provide more relevant answers if they ask about what they are seeing or what they can do here.
 
@@ -295,14 +336,20 @@ For deploy_website:
 - If projectName is not explicit, you may omit it and the backend will derive one.
 - Include framework, theme, and template only when the user expresses them or they are clear from context.
 
-If a selected draft agent has capability workflow_insight, prefer workflow_insight unless the user explicitly asks to deploy something new.`;
+If a selected draft agent has capability workflow_insight, you must call workflow_insight for workflow, runtime, log, failure, status, or summary questions unless the user explicitly asks to deploy something new.
+Do not answer with a generic limitation like "I cannot summarize workflows" when workflow_insight is available.
+If the user's request is about workflows in Persian or English, treat it as a workflow_insight request by default.`;
 
         const coreMessages = await convertToModelMessages(messages);
+        const toolChoice = shouldForceWorkflowInsightTool(selectedAgent, latestUserText)
+          ? { type: 'tool' as const, toolName: 'workflow_insight' as const }
+          : undefined;
 
         const result = streamText({
           model: google('gemini-2.5-flash'),
           system: systemPrompt,
           messages: coreMessages,
+          toolChoice,
           tools: {
             workflow_insight: tool({
               description:
