@@ -875,6 +875,165 @@ func (g *EchoGateway) setupAgentRoutes() {
 		}
 		return c.JSON(http.StatusOK, map[string]string{"status": "paused"})
 	})
+
+	// Execute Agent (Consolidated Workflow Insight Orchestration)
+	apiAgents := g.echo.Group("/api/agents")
+	apiAgents.POST("/execute", func(c echo.Context) error {
+		var body struct {
+			Question      string                 `json:"question"`
+			WorkflowID    string                 `json:"workflowId,omitempty"`
+			Status        string                 `json:"status,omitempty"`
+			Limit         int                    `json:"limit,omitempty"`
+			SelectedAgent map[string]interface{} `json:"selectedAgent,omitempty"`
+			CurrentPath   string                 `json:"currentPath,omitempty"`
+			CurrentRoute  string                 `json:"currentRoute,omitempty"`
+		}
+
+		if err := c.Bind(&body); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{
+				"status":     "error",
+				"capability": "workflow_insight",
+				"error":      "invalid_request",
+				"message":    err.Error(),
+			})
+		}
+
+		// Use limit or default to 3, max 5
+		limit := body.Limit
+		if limit <= 0 {
+			limit = 3
+		} else if limit > 5 {
+			limit = 5
+		}
+
+		// Retrieve workflows
+		ctx := c.Request().Context()
+		records, err := g.listWorkflowExecutionRecords(ctx)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+				"status":     "error",
+				"capability": "workflow_insight",
+				"question":   body.Question,
+				"error":      "workflow_data_unavailable",
+				"message":    fmt.Sprintf("Failed to retrieve workflows: %v", err),
+			})
+		}
+
+		// Retrieve logs for fallback
+		logs, _ := g.listWorkflowLogEntries(ctx)
+		lastLogMap := make(map[string]string)
+		for _, logEntry := range logs {
+			// Because listWorkflowLogEntries sorts by time descending,
+			// the first one we encounter for a workflow is the latest.
+			if _, exists := lastLogMap[logEntry.WorkflowID]; !exists {
+				lastLogMap[logEntry.WorkflowID] = logEntry.Message
+			}
+		}
+
+		// Filter workflows
+		var filtered []map[string]interface{}
+		statusCount := map[string]int{}
+		for _, rec := range records {
+			if body.WorkflowID != "" && rec.WorkflowID != body.WorkflowID {
+				continue
+			}
+			if body.Status != "" && rec.Status != body.Status {
+				continue
+			}
+			
+			statusCount[rec.Status]++
+
+			matchedBy := "recent_activity"
+			if body.WorkflowID != "" {
+				matchedBy = "workflow_id"
+			} else if body.Status != "" {
+				matchedBy = "status"
+			}
+
+			lastLog := ""
+			if len(rec.Logs) > 0 {
+				lastLog = rec.Logs[len(rec.Logs)-1]
+			} else {
+				lastLog = lastLogMap[rec.WorkflowID]
+			}
+
+			// We only collect up to 'limit' workflows for the detailed output
+			if len(filtered) < limit {
+				var planningSource interface{}
+				if rec.Artifacts != nil {
+					planningSource = rec.Artifacts.PlanningSource
+				}
+				filtered = append(filtered, map[string]interface{}{
+					"workflowId":      rec.WorkflowID,
+					"name":            rec.Name,
+					"status":          rec.Status,
+					"currentStep":     rec.CurrentStep,
+					"planning_source": planningSource,
+					"last_log":        lastLog,
+					"updated_at":      rec.UpdatedAt,
+					"matched_by":      matchedBy,
+				})
+			}
+		}
+
+		if len(filtered) == 0 {
+			errCode := "no_workflows_available"
+			errMsg := "No workflows are available for the requested insight."
+			if body.WorkflowID != "" {
+				errCode = "workflow_not_found"
+				errMsg = fmt.Sprintf("Workflow %s was not found.", body.WorkflowID)
+			}
+			return c.JSON(http.StatusNotFound, map[string]interface{}{
+				"status":     "error",
+				"capability": "workflow_insight",
+				"question":   body.Question,
+				"error":      errCode,
+				"message":    errMsg,
+			})
+		}
+
+		// Summarize
+		var summary string
+		if len(filtered) == 1 {
+			wf := filtered[0]
+			summary = fmt.Sprintf("%v is %v at step %v.", wf["name"], wf["status"], wf["currentStep"])
+			if wf["last_log"] != "" {
+				summary = fmt.Sprintf("%s Latest signal: %v", summary, wf["last_log"])
+			}
+		} else {
+			statusFilterStr := ""
+			if body.Status != "" {
+				statusFilterStr = fmt.Sprintf(" with status %s", body.Status)
+			}
+			highlight := filtered[0]
+			summary = fmt.Sprintf("Found %d workflows%s. Running: %d, completed: %d, failed: %d. Top highlight: %v is %v at step %v.",
+				len(filtered), statusFilterStr, statusCount["RUNNING"], statusCount["COMPLETED"], statusCount["FAILED"],
+				highlight["name"], highlight["status"], highlight["currentStep"])
+		}
+
+		agentName := ""
+		if body.SelectedAgent != nil {
+			if name, ok := body.SelectedAgent["name"].(string); ok {
+				agentName = name
+			}
+		}
+
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"status":             "success",
+			"capability":         "workflow_insight",
+			"question":           body.Question,
+			"message":            summary,
+			"summary":            summary,
+			"selected_workflows": filtered,
+			"total_workflows":    len(filtered),
+			"selected_agent":     agentName,
+			"filters": map[string]interface{}{
+				"workflow_id": body.WorkflowID,
+				"status":      body.Status,
+				"limit":       limit,
+			},
+		})
+	})
 }
 
 func (g *EchoGateway) setupWorkflowRoutes() {

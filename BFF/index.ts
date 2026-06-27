@@ -84,7 +84,7 @@ function deriveProjectName(projectName: string | undefined, prompt: string) {
   return slugifyProjectName(candidate);
 }
 
-function getErrorMessage(error: unknown) {
+function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error';
 }
 
@@ -118,109 +118,6 @@ async function fetchGoJson(path: string, init?: RequestInit) {
   } finally {
     clearTimeout(timeoutId);
   }
-}
-
-function normalizeWorkflowStatus(status: unknown) {
-  const normalized = typeof status === 'string' ? status.toUpperCase() : 'RUNNING';
-
-  switch (normalized) {
-    case 'ACTIVE':
-      return 'RUNNING';
-    case 'DONE':
-      return 'COMPLETED';
-    default:
-      return normalized;
-  }
-}
-
-function normalizeWorkflowRecord(payload: any): WorkflowRecord {
-  const artifacts = payload?.artifacts ?? {};
-  const workflowId =
-    payload?.workflowId ??
-    payload?.workflow_id ??
-    payload?.id ??
-    'unknown';
-
-  return {
-    workflowId,
-    name:
-      payload?.name ??
-      artifacts?.projectName ??
-      artifacts?.project_name ??
-      workflowId,
-    status: normalizeWorkflowStatus(payload?.status),
-    currentStep: payload?.currentStep ?? payload?.current_step ?? 'INIT',
-    planningSource:
-      payload?.planningSource ??
-      payload?.planning_source ??
-      artifacts?.planningSource ??
-      artifacts?.planning_source,
-    logs: Array.isArray(payload?.logs)
-      ? payload.logs.filter((item: unknown): item is string => typeof item === 'string')
-      : [],
-    updatedAt:
-      payload?.updatedAt ??
-      payload?.updated_at ??
-      payload?.lastRun,
-  };
-}
-
-function normalizeWorkflowLogRecord(payload: any): WorkflowLogRecord {
-  return {
-    workflowId: payload?.workflowId ?? payload?.workflow_id ?? 'unknown',
-    message: payload?.message ?? '',
-    time: payload?.time,
-    status: normalizeWorkflowStatus(payload?.status),
-    currentStep: payload?.currentStep ?? payload?.current_step ?? 'INIT',
-  };
-}
-
-function buildLastLogMap(logs: WorkflowLogRecord[]) {
-  const entries = [...logs]
-    .filter((log) => log.workflowId && log.workflowId !== 'unknown')
-    .sort((a, b) => {
-      const left = a.time ? new Date(a.time).getTime() : 0;
-      const right = b.time ? new Date(b.time).getTime() : 0;
-      return right - left;
-    });
-
-  const map = new Map<string, WorkflowLogRecord>();
-  for (const log of entries) {
-    if (!map.has(log.workflowId)) {
-      map.set(log.workflowId, log);
-    }
-  }
-  return map;
-}
-
-function summarizeWorkflowInsight(workflows: WorkflowRecord[], statusFilter?: string) {
-  if (workflows.length === 0) {
-    return statusFilter
-      ? `No workflows matched status ${statusFilter}.`
-      : 'No workflows are available to summarize right now.';
-  }
-
-  if (workflows.length === 1) {
-    const workflow = workflows[0]!;
-    const logText = workflow.logs[workflow.logs.length - 1];
-    return logText
-      ? `${workflow.name} is ${workflow.status} at step ${workflow.currentStep}. Latest signal: ${logText}`
-      : `${workflow.name} is ${workflow.status} at step ${workflow.currentStep}.`;
-  }
-
-  const counts = workflows.reduce(
-    (acc, workflow) => {
-      acc[workflow.status] = (acc[workflow.status] ?? 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>,
-  );
-  const highlight = workflows[0]!;
-
-  return `Found ${workflows.length} workflows` +
-    `${statusFilter ? ` with status ${statusFilter}` : ''}. ` +
-    `Running: ${counts.RUNNING ?? 0}, completed: ${counts.COMPLETED ?? 0}, failed: ${counts.FAILED ?? 0}. ` +
-    `Top highlight: ${highlight.name} is ${highlight.status} at step ${highlight.currentStep}.`;
 }
 
 function buildSelectedAgentPrompt(selectedAgent: SelectedAgentContext | null | undefined) {
@@ -376,90 +273,25 @@ If the user's request is about workflows in Persian or English, treat it as a wo
                 }
 
                 try {
-                  const [workflowPayload, logsPayload] = await Promise.all([
-                    normalizedWorkflowId
-                      ? fetchGoJson(`/workflows/${encodeURIComponent(normalizedWorkflowId)}`)
-                      : fetchGoJson('/workflows'),
-                    fetchGoJson('/logs'),
-                  ]);
-
-                  const logs = Array.isArray(logsPayload)
-                    ? logsPayload.map(normalizeWorkflowLogRecord)
-                    : [];
-                  const lastLogMap = buildLastLogMap(logs);
-
-                  const workflows = (
-                    Array.isArray(workflowPayload) ? workflowPayload : [workflowPayload]
-                  )
-                    .map(normalizeWorkflowRecord)
-                    .filter((workflow) =>
-                      normalizedWorkflowId ? workflow.workflowId === normalizedWorkflowId : true,
-                    )
-                    .filter((workflow) =>
-                      normalizedStatus ? workflow.status === normalizedStatus : true,
-                    )
-                    .map((workflow) => {
-                      const fallbackLog = lastLogMap.get(workflow.workflowId)?.message;
-                      return {
-                        ...workflow,
-                        logs:
-                          workflow.logs.length > 0
-                            ? workflow.logs
-                            : fallbackLog
-                              ? [fallbackLog]
-                              : [],
-                      };
-                    })
-                    .slice(0, normalizedLimit);
-
-                  if (workflows.length === 0) {
-                    return {
-                      status: 'error',
-                      capability: 'workflow_insight',
-                      error: normalizedWorkflowId ? 'workflow_not_found' : 'no_workflows_available',
+                  const executeResult = await fetchGoJson('/api/agents/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
                       question: normalizedQuestion,
-                      message: normalizedWorkflowId
-                        ? `Workflow ${normalizedWorkflowId} was not found.`
-                        : 'No workflows are available for the requested insight.',
-                    };
-                  }
-
-                  const selectedWorkflows = workflows.map((workflow) => ({
-                    workflowId: workflow.workflowId,
-                    name: workflow.name,
-                    status: workflow.status,
-                    currentStep: workflow.currentStep,
-                    planning_source: workflow.planningSource,
-                    last_log: workflow.logs[workflow.logs.length - 1],
-                    updated_at: workflow.updatedAt,
-                    matched_by: normalizedWorkflowId
-                      ? 'workflow_id'
-                      : normalizedStatus
-                        ? 'status'
-                        : 'recent_activity',
-                  }));
-                  const summary = summarizeWorkflowInsight(workflows, normalizedStatus);
-
-                  return {
-                    status: 'success',
-                    capability: 'workflow_insight',
-                    question: normalizedQuestion,
-                    message: summary,
-                    summary,
-                    selected_workflows: selectedWorkflows,
-                    total_workflows: selectedWorkflows.length,
-                    selected_agent: selectedAgent?.name,
-                    filters: {
-                      workflow_id: normalizedWorkflowId,
+                      workflowId: normalizedWorkflowId,
                       status: normalizedStatus,
                       limit: normalizedLimit,
-                    },
-                  };
+                      selectedAgent: selectedAgent,
+                      currentPath: currentPath,
+                      currentRoute: currentRoute
+                    }),
+                  });
+                  return executeResult;
                 } catch (error) {
                   const errorMessage = getErrorMessage(error);
                   const isNotFound = errorMessage.toLowerCase().includes('not found');
                   
-                  console.error('[BFF] Error calling workflow insight endpoints:', error);
+                  console.error('[BFF] Error calling workflow insight endpoint:', error);
                   return {
                     status: 'error',
                     capability: 'workflow_insight',
